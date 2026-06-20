@@ -5,3 +5,19 @@ node_modules/
 .next/
 dist/
 build/
+
+C:\Users\nihad\Desktop\hackucb\backend\.env
+backend/.env
+backend/__pycache__/
+backend/api/__pycache__/
+backend/agents/__pycache__/
+backend/models/__pycache__/
+backend/services/__pycache__/
+backend/tests/__pycache__/
+backend/*.sqlite3
+
+# Temporary backend split for incremental commits:
+# Commit 1: keep core app files only
+backend/agents/
+backend/services/
+backend/tests/

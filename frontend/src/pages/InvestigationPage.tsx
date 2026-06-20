@@ -10,6 +10,7 @@ import {
   runCounterNarratives,
   runReport,
   runRetrieval,
+  runSourceDiversity,
   runTimeline,
 } from "../lib/api";
 import { getInvestigationExperience } from "../lib/demoData";
@@ -20,11 +21,14 @@ import {
   getLimitations,
   getRecommendedChecks,
   getSearchWarnings,
+  getSourceDiversityCaveat,
+  getSourceDiversityFindings,
+  getSourceDiversityHighlights,
   getStageLabel,
   getTopClaims,
   isLiveInvestigationId,
 } from "../lib/liveInvestigation";
-import type { LiveInvestigationWorkspace } from "../types/rhetoriq";
+import type { LiveInvestigationWorkspace, LiveSourceDiversityResult } from "../types/rhetoriq";
 
 export default function InvestigationPage() {
   const { id = "demo" } = useParams();
@@ -64,6 +68,18 @@ export default function InvestigationPage() {
         if (!nextWorkspace.retrieval) {
           setIsRunningPipeline(true);
           await runRetrieval(id);
+          nextWorkspace = await getInvestigationWorkspace(id);
+          if (cancelled) {
+            return;
+          }
+          startTransition(() => {
+            setWorkspace(nextWorkspace);
+          });
+        }
+
+        if (!nextWorkspace.source_diversity) {
+          setIsRunningPipeline(true);
+          await runSourceDiversity(id);
           nextWorkspace = await getInvestigationWorkspace(id);
           if (cancelled) {
             return;
@@ -154,6 +170,9 @@ export default function InvestigationPage() {
   const searchWarnings = workspace ? getSearchWarnings(workspace) : [];
   const topClaims = workspace ? getTopClaims(workspace) : [];
   const stageLabel = workspace ? getStageLabel(workspace) : null;
+  const sourceDiversityHighlights = workspace ? getSourceDiversityHighlights(workspace) : [];
+  const sourceDiversityFindings = workspace ? getSourceDiversityFindings(workspace) : [];
+  const sourceDiversityCaveat = workspace ? getSourceDiversityCaveat(workspace.source_diversity) : null;
 
   return (
     <main className="investigation-page min-h-screen bg-white">
@@ -271,6 +290,20 @@ export default function InvestigationPage() {
                     {coverageHighlights.map((item) => (
                       <InfoPill key={item} value={item} />
                     ))}
+                  </InfoCard>
+                ) : null}
+                {workspace.source_diversity ? (
+                  <InfoCard title="Source Diversity">
+                    {sourceDiversityHighlights.map((item) => (
+                      <InfoPill key={item} value={item} />
+                    ))}
+                    {formatDistributionRows(workspace.source_diversity).map((item) => (
+                      <InfoListItem key={item} value={item} />
+                    ))}
+                    {sourceDiversityFindings.map((item) => (
+                      <InfoListItem key={item.id} value={`${item.label}: ${item.detail}`} />
+                    ))}
+                    {sourceDiversityCaveat ? <InfoListItem value={sourceDiversityCaveat} /> : null}
                   </InfoCard>
                 ) : null}
                 {recommendedChecks.length > 0 ? (
@@ -434,4 +467,26 @@ function MetricCard({ label, value }: { label: string; value: string }) {
       <p className="mt-2 text-sm font-semibold leading-6 text-[var(--ink)]">{value}</p>
     </div>
   );
+}
+
+function formatDistributionRows(diversity: LiveSourceDiversityResult) {
+  return [
+    formatDistributionLine("Source types", diversity.source_type_distribution),
+    formatDistributionLine("Geography", diversity.geographic_distribution),
+    formatDistributionLine("Institutions", diversity.institution_distribution),
+    formatDistributionLine("Content forms", diversity.content_form_distribution),
+  ].filter(Boolean) as string[];
+}
+
+function formatDistributionLine(label: string, distribution: Record<string, number>) {
+  const entries = Object.entries(distribution)
+    .filter(([, count]) => count > 0)
+    .sort((left, right) => right[1] - left[1]);
+  if (entries.length === 0) {
+    return "";
+  }
+  const summary = entries
+    .map(([key, count]) => `${key.replaceAll("_", " ")}: ${count}`)
+    .join(", ");
+  return `${label}: ${summary}`;
 }

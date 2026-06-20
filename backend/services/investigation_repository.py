@@ -13,6 +13,7 @@ from models.investigation import (
     InvestigationPlan,
     InvestigationWorkspace,
     RetrievalResult,
+    SourceDiversityResult,
     TimelineResult,
 )
 
@@ -95,6 +96,7 @@ class InvestigationRepository:
             plan=self.get_plan(investigation_id),
             retrieval=self.get_retrieval_result(investigation_id),
             retrieved_documents=self.get_retrieved_documents(investigation_id),
+            source_diversity=self.get_source_diversity_result(investigation_id),
             timeline=self.get_timeline_result(investigation_id),
             counter_narratives=self.get_counter_narrative_result(investigation_id),
             analyst=self.get_analyst_result(investigation_id),
@@ -250,6 +252,38 @@ class InvestigationRepository:
         if not row:
             return None
         return TimelineResult.model_validate_json(row["result_json"])
+
+    def save_source_diversity_result(self, result: SourceDiversityResult) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE investigations
+                SET status = ?, current_stage = ?, updated_at = ?
+                WHERE investigation_id = ?
+                """,
+                ("source_diversity_completed", "source_diversity", now, result.investigation_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO source_diversity_results (investigation_id, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(investigation_id) DO UPDATE SET
+                    result_json=excluded.result_json,
+                    updated_at=excluded.updated_at
+                """,
+                (result.investigation_id, result.model_dump_json(), now, now),
+            )
+
+    def get_source_diversity_result(self, investigation_id: str) -> SourceDiversityResult | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT result_json FROM source_diversity_results WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return SourceDiversityResult.model_validate_json(row["result_json"])
 
     def save_counter_narrative_result(self, result: CounterNarrativeResult) -> None:
         now = datetime.now(timezone.utc).isoformat()
@@ -415,6 +449,13 @@ class InvestigationRepository:
                 );
 
                 CREATE TABLE IF NOT EXISTS timeline_results (
+                    investigation_id TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS source_diversity_results (
                     investigation_id TEXT PRIMARY KEY,
                     result_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,

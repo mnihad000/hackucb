@@ -186,6 +186,7 @@ export type InvestigationExperience = {
 export type InvestigationStage =
   | "planner"
   | "retriever"
+  | "source_diversity"
   | "timeline"
   | "counter_narrative"
   | "analyst"
@@ -194,6 +195,7 @@ export type InvestigationStage =
 export type InvestigationPipelineStatus =
   | "planning_completed"
   | "retrieval_completed"
+  | "source_diversity_completed"
   | "timeline_completed"
   | "counter_narrative_completed"
   | "analyst_completed"
@@ -264,6 +266,44 @@ export type LiveDocument = {
   duplicate_of_doc_id: string | null;
   is_seeded_demo_data: boolean | null;
   metadata: Record<string, unknown> | null;
+  source_profile?: LiveSourceProfile | null;
+};
+
+export type LiveSourceProfile = {
+  institution_kind: "official" | "media" | "advocacy" | "independent" | "community" | "unknown";
+  content_form:
+    | "original_reporting"
+    | "reposting"
+    | "opinion"
+    | "transcript"
+    | "community_post"
+    | "unknown";
+  ideology: "left" | "center" | "right" | "unknown";
+  classification_method: "registry" | "heuristic" | "unknown";
+  classification_confidence: "low" | "medium" | "high";
+};
+
+export type LiveSourceDiversityFinding = {
+  id: string;
+  label: string;
+  detail: string;
+};
+
+export type LiveSourceDiversityResult = {
+  investigation_id: string;
+  plan_snapshot: LiveInvestigationPlan;
+  total_documents: number;
+  classified_documents: number;
+  source_type_distribution: Record<string, number>;
+  geographic_distribution: Record<string, number>;
+  institution_distribution: Record<string, number>;
+  content_form_distribution: Record<string, number>;
+  ideology_distribution: Record<string, number>;
+  findings: LiveSourceDiversityFinding[];
+  limitations: string[];
+  confidence_score: number;
+  confidence_label: InvestigationConfidence;
+  cached: boolean;
 };
 
 export type LiveTimelineEvent = {
@@ -399,6 +439,7 @@ export type LiveInvestigationWorkspace = {
   plan: LiveInvestigationPlan | null;
   retrieval: LiveRetrievalResult | null;
   retrieved_documents: LiveDocument[];
+  source_diversity: LiveSourceDiversityResult | null;
   timeline: LiveTimelineResult | null;
   counter_narratives: LiveCounterNarrativeResult | null;
   analyst: LiveAnalystResult | null;

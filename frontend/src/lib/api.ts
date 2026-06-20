@@ -93,6 +93,13 @@ export async function runTimeline(investigationId: string) {
   });
 }
 
+export async function runSourceDiversity(investigationId: string) {
+  return request(`/api/investigations/${investigationId}/source-diversity`, {
+    body: {},
+    method: "POST",
+  });
+}
+
 export async function runCounterNarratives(investigationId: string) {
   return request(`/api/investigations/${investigationId}/counter-narratives`, {
     body: {},

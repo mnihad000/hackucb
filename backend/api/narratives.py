@@ -18,6 +18,8 @@ from models.investigation import (
     PlannerResponse,
     RetrieveRequest,
     RetrievalResult,
+    SourceDiversityRequest,
+    SourceDiversityResult,
     TimelineRequest,
     TimelineResult,
 )
@@ -32,6 +34,7 @@ from services.ingestion import get_merged_documents
 from services.investigation_repository import InvestigationRepository
 from services.mutation_detection import MutationDetector
 from services.retrieval import Retriever
+from services.source_diversity_builder import build_source_diversity as build_source_diversity_artifact
 from services.spike_detection import SpikeDetector
 from services.timeline_builder import build_timeline as build_timeline_artifact
 from services.verification import VerificationService
@@ -156,6 +159,46 @@ def retrieve(investigation_id: str, request: RetrieveRequest) -> RetrievalResult
 
 
 # ---------------------------------------------------------------------------
+# POST /api/investigations/{id}/source-diversity - build deterministic source diversity artifact
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/investigations/{investigation_id}/source-diversity",
+    response_model=SourceDiversityResult,
+)
+def source_diversity(
+    investigation_id: str,
+    request: SourceDiversityRequest,
+) -> SourceDiversityResult:
+    if not _investigation_repo.investigation_exists(investigation_id):
+        raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
+
+    plan = _investigation_repo.get_plan(investigation_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Investigation plan for '{investigation_id}' not found.")
+
+    retrieval = _investigation_repo.get_retrieval_result(investigation_id)
+    if retrieval is None:
+        raise HTTPException(status_code=404, detail=f"Retrieval result for '{investigation_id}' not found.")
+
+    documents = _investigation_repo.get_retrieved_documents(investigation_id)
+
+    if not request.force_refresh:
+        cached = _investigation_repo.get_source_diversity_result(investigation_id)
+        if cached is not None:
+            return cached.model_copy(update={"cached": True})
+
+    try:
+        result = build_source_diversity_artifact(investigation_id, plan, retrieval, documents)
+        _investigation_repo.save_source_diversity_result(result)
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Source diversity build failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
 # POST /api/investigations/{id}/timeline - build deterministic timeline artifact
 # ---------------------------------------------------------------------------
 
@@ -259,6 +302,11 @@ def analyst(
         if cached is not None:
             return cached.model_copy(update={"cached": True})
 
+    source_diversity_result = _investigation_repo.get_source_diversity_result(investigation_id)
+    if source_diversity_result is None:
+        source_diversity_result = build_source_diversity_artifact(investigation_id, plan, retrieval, documents)
+        _investigation_repo.save_source_diversity_result(source_diversity_result)
+
     timeline_result = _investigation_repo.get_timeline_result(investigation_id)
     if timeline_result is None:
         timeline_result = build_timeline_artifact(investigation_id, plan, retrieval, documents)
@@ -315,6 +363,11 @@ def final_report(
         cached = _investigation_repo.get_final_report_result(investigation_id)
         if cached is not None:
             return cached.model_copy(update={"cached": True})
+
+    source_diversity_result = _investigation_repo.get_source_diversity_result(investigation_id)
+    if source_diversity_result is None:
+        source_diversity_result = build_source_diversity_artifact(investigation_id, plan, retrieval, documents)
+        _investigation_repo.save_source_diversity_result(source_diversity_result)
 
     timeline_result = _investigation_repo.get_timeline_result(investigation_id)
     if timeline_result is None:

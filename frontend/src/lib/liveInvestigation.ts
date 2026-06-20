@@ -8,6 +8,7 @@ import type {
   LiveCounterNarrative,
   LiveDocument,
   LiveFinalReportClaim,
+  LiveSourceDiversityResult,
   LiveInvestigationWorkspace,
   LiveTimelineEvent,
 } from "../types/rhetoriq";
@@ -97,12 +98,42 @@ export function getCoverageHighlights(workspace: LiveInvestigationWorkspace) {
   ];
 }
 
+export function getSourceDiversityHighlights(workspace: LiveInvestigationWorkspace) {
+  const diversity = workspace.source_diversity;
+  if (!diversity) {
+    return [];
+  }
+
+  return [
+    `${diversity.classified_documents}/${diversity.total_documents} docs classified`,
+    summarizeDistribution(diversity.source_type_distribution),
+    summarizeDistribution(diversity.institution_distribution),
+  ].filter(Boolean) as string[];
+}
+
+export function getSourceDiversityFindings(workspace: LiveInvestigationWorkspace) {
+  return workspace.source_diversity?.findings ?? [];
+}
+
+export function getSourceDiversityCaveat(diversity: LiveSourceDiversityResult | null | undefined) {
+  if (!diversity) {
+    return null;
+  }
+  const unknownInstitutionCount = diversity.institution_distribution.unknown ?? 0;
+  if (unknownInstitutionCount > 0) {
+    return `Source diversity provides context about the observed dataset. ${unknownInstitutionCount} source labels remain unknown, so this is not a truth score or moral judgment.`;
+  }
+  return "Source diversity provides context about the observed dataset. It is not a truth score or moral judgment.";
+}
+
 export function getStageLabel(workspace: LiveInvestigationWorkspace) {
   switch (workspace.current_stage) {
     case "planner":
       return "Planner completed";
     case "retriever":
       return "Retrieval completed";
+    case "source_diversity":
+      return "Source diversity built";
     case "timeline":
       return "Timeline built";
     case "counter_narrative":
@@ -442,6 +473,8 @@ function formatStatus(status: LiveInvestigationWorkspace["status"]) {
       return "Planning completed";
     case "retrieval_completed":
       return "Retrieval completed";
+    case "source_diversity_completed":
+      return "Source diversity built";
     case "timeline_completed":
       return "Timeline built";
     case "counter_narrative_completed":
@@ -492,4 +525,15 @@ function formatTime(value: string | null | undefined) {
   }
 
   return TIME_FORMATTER.format(new Date(value));
+}
+
+function summarizeDistribution(distribution: Record<string, number>) {
+  const entries = Object.entries(distribution)
+    .filter(([, count]) => count > 0)
+    .sort((left, right) => right[1] - left[1]);
+  if (entries.length === 0) {
+    return "";
+  }
+  const [label, count] = entries[0];
+  return `${count} ${label.replaceAll("_", " ")}`;
 }

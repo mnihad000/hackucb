@@ -1,65 +1,66 @@
 Findings
 
-The portability cleanup is done. Backend config now loads `backend/.env` from the backend directory, relative SQLite paths resolve under `backend/`, the frontend builds, and the backend test suite passes.
+The live hot-topics pipeline is implemented. The backend exposes a discovery-agent trending feed through `backend/api/trending.py`, the router is mounted in `backend/main.py`, the dashboard fetches the live feed from `frontend/src/pages/DashboardPage.tsx`, and radar cards start real investigations through `POST /api/trending/{topic_id}/investigate`.
 
-The investigation experience is still not spec-complete on the frontend. The live page mainly renders the flowchart, key claims, and a few generic info cards in `frontend/src/pages/InvestigationPage.tsx` around lines 147 and 254. The spec still requires a distinct timeline, narrative family tree, source diversity panel, multi-agent debate summary, and receipts-driven report surface in `HACKATHON_MVP_SPEC.md` around lines 934 and 1117.
+The free-text investigation pipeline is also real end to end. The planner, retriever, source-diversity, timeline, counter-narrative, analyst, and final report stages are persisted and loaded into the investigation page.
 
-Live radar/trending is not actually wired into the app. The backend has a trending router in `backend/api/trending.py`, but `backend/main.py` only mounts health, ingest, and narratives. The dashboard still pulls hardcoded `radarTopics` and `recentInvestigations` from `frontend/src/lib/demoData.ts` via `frontend/src/pages/DashboardPage.tsx`, and the component itself still describes the radar as seeded in `frontend/src/components/dashboard/NarrativeRadar.tsx`.
+Source diversity is now a first-class investigation artifact. Retrieved documents are enriched with reusable `source_profile` metadata, the backend exposes `POST /api/investigations/{id}/source-diversity`, the workspace payload includes `source_diversity`, and the investigation page renders a dedicated source diversity panel.
 
-The live backend contract still omits several artifacts the docs promise. `LiveInvestigationWorkspace` only carries plan, retrieval, timeline, counter_narratives, analyst, and report in `frontend/src/types/rhetoriq.ts`, matching `backend/models/investigation.py`. There is no live `source_diversity`, `family`, or `agent_debate` artifact yet.
+The biggest remaining gap is that the investigation experience is still not spec-complete on the frontend. The page now has coverage, claims, and source-diversity context, but it still lacks a distinct timeline surface, narrative family tree, multi-agent debate summary, and a stronger receipts-driven report surface.
 
-The docs are not fully up to date with the code. `FRONTEND_DESCRIPTION.md` still says Ask RhetoriQ routes to the seeded demo and that the frontend does not call the backend yet, but the current component does POST to `/api/investigate` in `frontend/src/components/dashboard/AskRhetoriQ.tsx`. Part of what is missing is documentation cleanup and scope reconciliation.
+Some docs are now outdated in the opposite direction. Older markdown files still describe source diversity as missing, or describe the radar/frontend wiring as still seeded or incomplete.
 
 What Is Left
 
-1. Mount the trending router in `backend/main.py` so the backend exposes the live radar endpoint.
-2. Wire the frontend dashboard radar to the backend trending endpoint instead of only using `frontend/src/lib/demoData.ts`.
-3. Add the missing investigation UI sections: timeline, narrative family tree, source diversity, agent debate, and receipts/report surface.
-4. Extend the live investigation payload with `source_diversity`, `family`, `agent_debate`, and stronger `receipts` data.
-5. Clean up docs that still describe older frontend/backend behavior.
-6. Remove the temporary backend split rules from `.gitignore` when making the final full-backend commit.
+1. Extend the live investigation payload with `family`, `agent_debate`, and stronger `receipts` artifacts.
+2. Add the missing investigation UI sections: distinct timeline panel, narrative family tree, agent debate summary, and stronger receipts/report surface.
+3. Build a real `Receipts Agent` or receipts-stage artifact that maps claims to support status, better snippets, and verification state.
+4. Decide whether `RecentInvestigations` should remain seeded or become a live backend-backed list.
+5. Clean up docs that still describe older frontend/backend behavior, especially radar, investigation-page behavior, and source-diversity status.
+6. Remove the temporary backend split rules from `.gitignore` when making the final full-backend cleanup pass.
 
 Current Agents
 
-There are currently 2 real agent modules:
+There are currently 3 meaningful agent modules or agent-like orchestrators in the repo:
 
 1. `Planner Agent` in `backend/agents/planner_agent.py`
 2. `Retriever Agent` in `backend/agents/retriever_agent.py`
+3. `Discovery Agent` in `backend/agents/discovery_agent.py`
 
 There are also deterministic investigation stages that behave like pipeline steps, but are not separate LLM agents:
 
-1. `backend/services/timeline_builder.py`
-2. `backend/services/counter_narrative_builder.py`
-3. `backend/services/analyst_builder.py`
-4. `backend/services/final_report_builder.py`
-5. `backend/services/verification.py`
-6. `backend/services/graph_builder.py`
-7. `backend/services/mutation_detection.py`
-8. `backend/services/spike_detection.py`
+1. `backend/services/source_diversity_builder.py`
+2. `backend/services/timeline_builder.py`
+3. `backend/services/counter_narrative_builder.py`
+4. `backend/services/analyst_builder.py`
+5. `backend/services/final_report_builder.py`
+6. `backend/services/verification.py`
+7. `backend/services/graph_builder.py`
+8. `backend/services/mutation_detection.py`
+9. `backend/services/spike_detection.py`
+10. `backend/services/trending_ranker.py`
 
 Possible Additional Agents
 
-The docs describe an 8-agent backbone. If the project follows that architecture, the next 6 likely agent roles are:
+The docs still describe a broader multi-agent backbone. The next useful role-specific additions are:
 
-1. Timeline / chronology agent, unless kept deterministic.
-2. Counter-narrative investigator.
-3. Source diversity investigator.
-4. Analyst / synthesis agent.
-5. Skeptic agent.
-6. Receipts / grounding agent.
+1. Receipts / grounding agent.
+2. Skeptic or debate agent that challenges the analyst synthesis.
+3. Narrative family / mutation investigator.
+4. Final adjudicator / report-language agent once skeptic and receipts exist.
 
-Do not make every stage an LLM agent by default. Timeline, graph, spike detection, and basic receipt checks should stay deterministic unless the feature needs interpretation, comparison, synthesis, or critique.
+Do not make every stage an LLM agent by default. Timeline building, clustering, ranking, source-profile enrichment, and basic receipt checks should stay deterministic unless the feature requires synthesis, critique, or claim review.
 
-Investigator vs Counter-Source Investigator
+Recommended Next Agent
 
-The main investigator and counter-source investigator should be different roles.
+The next agent to build should be: `Receipts Agent`.
 
-The main investigator or analyst asks: what happened, how did this narrative spread, and what does the evidence support?
+That is the highest-value next agent because:
 
-The counter-source investigator asks: what credible opposing frames, corrections, rebuttals, or alternative explanations exist, and are we missing them?
-
-That separation helps prevent the final report from becoming one-sided. For MVP, `backend/services/counter_narrative_builder.py` can remain the deterministic version of that role. Later, it can be wrapped with a real `CounterNarrativeAgent` if the product needs deeper reasoning.
+1. The investigation page already has timeline, counter-narrative, analyst, report, and now source-diversity context, but trust still depends on stronger claim-to-evidence grounding.
+2. A receipts agent is narrower and more defensible than jumping straight to full debate. It can improve snippets, support status, and verification without inventing higher-level reasoning first.
+3. A later skeptic/debate agent becomes much stronger if claims already have structured receipt coverage and unsupported claims are explicitly flagged.
 
 Summary
 
-The core free-text backend pipeline is there: planner, retrieval, timeline, counter-narratives, analyst, final report, and persisted workspaces are real. The biggest remaining work is product finish: live radar hookup, spec-complete investigation UI, missing family/source-diversity/debate/receipts artifacts, and a clearer multi-agent presentation.
+The app now has a real live entrypoint and a persisted investigation pipeline with source diversity included. The next highest-value agentic addition is not another ecosystem classifier; it is a receipts/grounding layer that makes the report more inspectable, flags unsupported claims, and sets up a later skeptic/debate stage.

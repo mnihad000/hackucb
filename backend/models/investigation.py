@@ -2,7 +2,13 @@ from datetime import datetime
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
-from models.document import Document
+from models.document import (
+    Document,
+    SourceClassificationConfidence,
+    SourceContentForm,
+    SourceIdeology,
+    SourceInstitutionKind,
+)
 
 
 PlannerIntent = Literal[
@@ -17,12 +23,21 @@ RetrievalMode = Literal["broad", "narrow"]
 InvestigationStatus = Literal[
     "planning_completed",
     "retrieval_completed",
+    "source_diversity_completed",
     "timeline_completed",
     "counter_narrative_completed",
     "analyst_completed",
     "report_completed",
 ]
-InvestigationStage = Literal["planner", "retriever", "timeline", "counter_narrative", "analyst", "report"]
+InvestigationStage = Literal[
+    "planner",
+    "retriever",
+    "source_diversity",
+    "timeline",
+    "counter_narrative",
+    "analyst",
+    "report",
+]
 CoverageConfidence = Literal["low", "medium", "high"]
 TimelineEventType = Literal[
     "first_observed",
@@ -40,6 +55,7 @@ CounterNarrativeConfidenceLabel = Literal["low", "medium", "high"]
 ClaimType = Literal["observed_fact", "inference", "uncertainty", "limitation", "recommendation"]
 AnalystConfidenceLabel = Literal["low", "medium", "high"]
 ReportConfidenceLabel = Literal["low", "medium", "high"]
+SourceDiversityConfidenceLabel = Literal["low", "medium", "high"]
 
 
 class InvestigationPlanTimeWindow(BaseModel):
@@ -157,6 +173,35 @@ class RetrieveRequest(BaseModel):
 
     force_refresh: bool = False
     max_rounds: int | None = Field(default=None, ge=1, le=6)
+
+
+class SourceDiversityFinding(BaseModel):
+    id: str
+    label: str
+    detail: str
+
+
+class SourceDiversityResult(BaseModel):
+    investigation_id: str
+    plan_snapshot: InvestigationPlan
+    total_documents: int = 0
+    classified_documents: int = 0
+    source_type_distribution: dict[str, int] = Field(default_factory=dict)
+    geographic_distribution: dict[str, int] = Field(default_factory=dict)
+    institution_distribution: dict[SourceInstitutionKind, int] = Field(default_factory=dict)
+    content_form_distribution: dict[SourceContentForm, int] = Field(default_factory=dict)
+    ideology_distribution: dict[SourceIdeology, int] = Field(default_factory=dict)
+    findings: list[SourceDiversityFinding] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    confidence_label: SourceDiversityConfidenceLabel
+    cached: bool = False
+
+
+class SourceDiversityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force_refresh: bool = False
 
 
 class TimelineEvent(BaseModel):
@@ -320,6 +365,7 @@ class InvestigationWorkspace(BaseModel):
     plan: InvestigationPlan | None = None
     retrieval: RetrievalResult | None = None
     retrieved_documents: list[Document] = Field(default_factory=list)
+    source_diversity: SourceDiversityResult | None = None
     timeline: TimelineResult | None = None
     counter_narratives: CounterNarrativeResult | None = None
     analyst: AnalystResult | None = None

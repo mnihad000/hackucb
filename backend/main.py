@@ -55,6 +55,7 @@ def root() -> dict:
             "POST   /api/investigate  (query_text -> planner artifact)",
             "GET    /api/investigations/{id}  (load persisted investigation workspace)",
             "POST   /api/investigations/{id}/retrieve  (run retriever agent)",
+            "POST   /api/investigations/{id}/source-diversity  (build deterministic source diversity artifact)",
             "POST   /api/investigations/{id}/timeline  (build deterministic timeline artifact)",
             "POST   /api/investigations/{id}/counter-narratives  (build counter-frame artifact)",
             "POST   /api/investigations/{id}/analyst  (build synthesis artifact)",

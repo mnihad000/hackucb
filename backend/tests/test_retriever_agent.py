@@ -207,7 +207,9 @@ def test_retriever_agent_runs_iterative_loop_and_persists(tmp_path):
     assert len(result.retrieved_document_ids) >= 2
     assert result.coverage_summary.total_documents >= 2
     assert repo.get_retrieval_result("inv_1") is not None
-    assert len(repo.get_retrieved_documents("inv_1")) >= 2
+    persisted_docs = repo.get_retrieved_documents("inv_1")
+    assert len(persisted_docs) >= 2
+    assert all(doc.source_profile is not None for doc in persisted_docs)
 
 
 def test_retriever_agent_uses_planner_requested_outputs_in_round_queries(tmp_path):

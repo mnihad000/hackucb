@@ -3,6 +3,23 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 
+SourceInstitutionKind = Literal["official", "media", "advocacy", "independent", "community", "unknown"]
+SourceContentForm = Literal[
+    "original_reporting", "reposting", "opinion", "transcript", "community_post", "unknown"
+]
+SourceIdeology = Literal["left", "center", "right", "unknown"]
+SourceClassificationMethod = Literal["registry", "heuristic", "unknown"]
+SourceClassificationConfidence = Literal["low", "medium", "high"]
+
+
+class SourceProfile(BaseModel):
+    institution_kind: SourceInstitutionKind = "unknown"
+    content_form: SourceContentForm = "unknown"
+    ideology: SourceIdeology = "unknown"
+    classification_method: SourceClassificationMethod = "unknown"
+    classification_confidence: SourceClassificationConfidence = "low"
+
+
 class Document(BaseModel):
     id: str
     source_id: str | None = None
@@ -27,3 +44,4 @@ class Document(BaseModel):
     duplicate_of_doc_id: str | None = None
     is_seeded_demo_data: bool | None = None
     metadata: dict[str, Any] | None = None
+    source_profile: SourceProfile | None = None

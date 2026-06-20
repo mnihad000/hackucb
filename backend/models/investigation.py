@@ -28,6 +28,7 @@ InvestigationStatus = Literal[
     "counter_narrative_completed",
     "analyst_completed",
     "claim_counterpoint_completed",
+    "receipts_completed",
     "report_completed",
 ]
 InvestigationStage = Literal[
@@ -38,6 +39,7 @@ InvestigationStage = Literal[
     "counter_narrative",
     "analyst",
     "claim_counterpoint",
+    "receipts",
     "report",
 ]
 CoverageConfidence = Literal["low", "medium", "high"]
@@ -58,6 +60,23 @@ ClaimType = Literal["observed_fact", "inference", "uncertainty", "limitation", "
 AnalystConfidenceLabel = Literal["low", "medium", "high"]
 ClaimCounterpointType = Literal["opposing", "corrective", "reframing"]
 ClaimCounterpointConfidenceLabel = Literal["low", "medium", "high"]
+ClaimSupportStatus = Literal[
+    "supported",
+    "partially_supported",
+    "unsupported",
+    "contradicted",
+    "insufficient_evidence",
+]
+ReceiptVerificationStatus = Literal["verified", "unavailable", "metadata_mismatch", "pending"]
+ClaimVerificationState = Literal[
+    "verified",
+    "mixed",
+    "metadata_mismatch",
+    "unavailable",
+    "pending",
+    "not_available",
+]
+ReceiptsConfidenceLabel = Literal["low", "medium", "high"]
 ReportConfidenceLabel = Literal["low", "medium", "high"]
 SourceDiversityConfidenceLabel = Literal["low", "medium", "high"]
 
@@ -349,6 +368,51 @@ class ClaimCounterpointRequest(BaseModel):
     force_refresh: bool = False
 
 
+class ReceiptEvidence(BaseModel):
+    document_id: str
+    source_name: str
+    source_type: str
+    title: str
+    url: str
+    published_at: datetime | None = None
+    snippet: str | None = None
+    evidence_span: str
+    support_reason: str
+    matched_terms: list[str] = Field(default_factory=list)
+    verification_status: ReceiptVerificationStatus = "pending"
+
+
+class ClaimReceiptReview(BaseModel):
+    claim_id: str
+    claim_text: str
+    claim_side: Literal["main", "counter"]
+    support_status: ClaimSupportStatus
+    support_summary: str
+    supporting_receipts: list[ReceiptEvidence] = Field(default_factory=list)
+    contradicting_receipts: list[ReceiptEvidence] = Field(default_factory=list)
+    missing_evidence_notes: list[str] = Field(default_factory=list)
+    verification_state: ClaimVerificationState
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    caveats: list[str] = Field(default_factory=list)
+
+
+class ReceiptsResult(BaseModel):
+    investigation_id: str
+    plan_snapshot: InvestigationPlan
+    claim_receipts: list[ClaimReceiptReview] = Field(default_factory=list)
+    counter_claim_receipts: list[ClaimReceiptReview] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    confidence_label: ReceiptsConfidenceLabel
+    cached: bool = False
+
+
+class ReceiptsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force_refresh: bool = False
+
+
 class FinalReportClaim(BaseModel):
     claim_id: str
     claim_text: str
@@ -356,6 +420,12 @@ class FinalReportClaim(BaseModel):
     confidence_score: float = Field(ge=0.0, le=1.0)
     caveats: list[str] = Field(default_factory=list)
     citations: list[ReportCitation] = Field(default_factory=list)
+    support_status: ClaimSupportStatus | None = None
+    support_summary: str | None = None
+    supporting_receipts: list[ReceiptEvidence] = Field(default_factory=list)
+    contradicting_receipts: list[ReceiptEvidence] = Field(default_factory=list)
+    missing_evidence_notes: list[str] = Field(default_factory=list)
+    verification_state: ClaimVerificationState | None = None
     counterpoint_summary: str | None = None
     counterpoint_type: ClaimCounterpointType | None = None
     counter_citations: list[ReportCitation] = Field(default_factory=list)
@@ -408,4 +478,5 @@ class InvestigationWorkspace(BaseModel):
     counter_narratives: CounterNarrativeResult | None = None
     analyst: AnalystResult | None = None
     claim_counterpoints: ClaimCounterpointResult | None = None
+    receipts: ReceiptsResult | None = None
     report: FinalReportResult | None = None

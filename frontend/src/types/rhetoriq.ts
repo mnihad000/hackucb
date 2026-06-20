@@ -192,6 +192,7 @@ export type InvestigationStage =
   | "counter_narrative"
   | "analyst"
   | "claim_counterpoint"
+  | "receipts"
   | "report";
 
 export type InvestigationPipelineStatus =
@@ -202,6 +203,7 @@ export type InvestigationPipelineStatus =
   | "counter_narrative_completed"
   | "analyst_completed"
   | "claim_counterpoint_completed"
+  | "receipts_completed"
   | "report_completed";
 
 export type LiveInvestigationPlan = {
@@ -399,6 +401,20 @@ export type LiveReportCitation = {
   relevance_note: string;
 };
 
+export type LiveReceiptEvidence = {
+  document_id: string;
+  source_name: string;
+  source_type: string;
+  title: string;
+  url: string;
+  published_at: string | null;
+  snippet: string | null;
+  evidence_span: string;
+  support_reason: string;
+  matched_terms: string[];
+  verification_status: "verified" | "unavailable" | "metadata_mismatch" | "pending";
+};
+
 export type LiveClaimCounterpointPair = {
   claim_id: string;
   main_claim_text: string;
@@ -424,6 +440,42 @@ export type LiveClaimCounterpointResult = {
   cached: boolean;
 };
 
+export type LiveClaimReceiptReview = {
+  claim_id: string;
+  claim_text: string;
+  claim_side: "main" | "counter";
+  support_status:
+    | "supported"
+    | "partially_supported"
+    | "unsupported"
+    | "contradicted"
+    | "insufficient_evidence";
+  support_summary: string;
+  supporting_receipts: LiveReceiptEvidence[];
+  contradicting_receipts: LiveReceiptEvidence[];
+  missing_evidence_notes: string[];
+  verification_state:
+    | "verified"
+    | "mixed"
+    | "metadata_mismatch"
+    | "unavailable"
+    | "pending"
+    | "not_available";
+  confidence_score: number;
+  caveats: string[];
+};
+
+export type LiveReceiptsResult = {
+  investigation_id: string;
+  plan_snapshot: LiveInvestigationPlan;
+  claim_receipts: LiveClaimReceiptReview[];
+  counter_claim_receipts: LiveClaimReceiptReview[];
+  limitations: string[];
+  confidence_score: number;
+  confidence_label: InvestigationConfidence;
+  cached: boolean;
+};
+
 export type LiveFinalReportClaim = {
   claim_id: string;
   claim_text: string;
@@ -431,6 +483,25 @@ export type LiveFinalReportClaim = {
   confidence_score: number;
   caveats: string[];
   citations: LiveReportCitation[];
+  support_status:
+    | "supported"
+    | "partially_supported"
+    | "unsupported"
+    | "contradicted"
+    | "insufficient_evidence"
+    | null;
+  support_summary: string | null;
+  supporting_receipts: LiveReceiptEvidence[];
+  contradicting_receipts: LiveReceiptEvidence[];
+  missing_evidence_notes: string[];
+  verification_state:
+    | "verified"
+    | "mixed"
+    | "metadata_mismatch"
+    | "unavailable"
+    | "pending"
+    | "not_available"
+    | null;
   counterpoint_summary: string | null;
   counterpoint_type: "opposing" | "corrective" | "reframing" | null;
   counter_citations: LiveReportCitation[];
@@ -475,5 +546,6 @@ export type LiveInvestigationWorkspace = {
   counter_narratives: LiveCounterNarrativeResult | null;
   analyst: LiveAnalystResult | null;
   claim_counterpoints: LiveClaimCounterpointResult | null;
+  receipts: LiveReceiptsResult | null;
   report: LiveFinalReportResult | null;
 };

@@ -6,10 +6,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from agents.claim_counterpoint_agent import build_claim_counterpoints
 from models.document import Document
-from models.investigation import InvestigationPlan, InvestigationPlanTimeWindow, RetrievalResult
+from models.investigation import (
+    ClaimReceiptReview,
+    InvestigationPlan,
+    InvestigationPlanTimeWindow,
+    ReceiptEvidence,
+    ReceiptsResult,
+    RetrievalResult,
+)
 from services.analyst_builder import build_analyst_result
 from services.counter_narrative_builder import build_counter_narratives
-from services.final_report_builder import build_final_report
+from services.final_report_builder import apply_receipts_annotations, build_final_report
 from services.investigation_repository import InvestigationRepository
 from services.timeline_builder import build_timeline
 
@@ -214,3 +221,75 @@ def test_final_report_result_persists_and_reloads(tmp_path):
     assert loaded is not None
     assert loaded.report_title == result.report_title
     assert loaded.key_claims[0].claim_id == result.key_claims[0].claim_id
+
+
+def test_apply_receipts_annotations_preserves_existing_report_fields():
+    plan = _plan()
+    docs = _documents()
+    retrieval = _retrieval(plan)
+    timeline = build_timeline("inv_report", plan, retrieval, docs)
+    counter = build_counter_narratives("inv_report", plan, retrieval, docs)
+    analyst = build_analyst_result("inv_report", plan, retrieval, docs, timeline, counter)
+    claim_counterpoints = build_claim_counterpoints(
+        "inv_report",
+        plan,
+        retrieval,
+        docs,
+        counter,
+        analyst,
+    )
+    report = build_final_report(
+        "inv_report",
+        plan,
+        retrieval,
+        docs,
+        timeline,
+        counter,
+        analyst,
+        claim_counterpoints,
+    )
+
+    receipts = ReceiptsResult(
+        investigation_id="inv_report",
+        plan_snapshot=plan,
+        claim_receipts=[
+            ClaimReceiptReview(
+                claim_id=report.key_claims[0].claim_id,
+                claim_text=report.key_claims[0].claim_text,
+                claim_side="main",
+                support_status="supported",
+                support_summary="Supported by focused receipts.",
+                supporting_receipts=[
+                    ReceiptEvidence(
+                        document_id=report.key_claims[0].citations[0].document_id,
+                        source_name=report.key_claims[0].citations[0].source_name,
+                        source_type=report.key_claims[0].citations[0].source_type,
+                        title=report.key_claims[0].citations[0].title,
+                        url=report.key_claims[0].citations[0].url,
+                        published_at=report.key_claims[0].citations[0].published_at,
+                        snippet=report.key_claims[0].citations[0].snippet,
+                        evidence_span=report.key_claims[0].citations[0].snippet or report.key_claims[0].claim_text,
+                        support_reason="Direct topical overlap with the claim.",
+                        matched_terms=["hidden", "energy", "tax"],
+                        verification_status="verified",
+                    )
+                ],
+                contradicting_receipts=[],
+                missing_evidence_notes=[],
+                verification_state="verified",
+                confidence_score=0.81,
+                caveats=[],
+            )
+        ],
+        counter_claim_receipts=[],
+        limitations=[],
+        confidence_score=0.81,
+        confidence_label="high",
+    )
+
+    annotated = apply_receipts_annotations(report, receipts)
+
+    assert annotated.key_claims[0].support_status == "supported"
+    assert annotated.key_claims[0].supporting_receipts
+    assert annotated.key_claims[0].citations == report.key_claims[0].citations
+    assert annotated.key_claims[0].counterpoint_summary == report.key_claims[0].counterpoint_summary

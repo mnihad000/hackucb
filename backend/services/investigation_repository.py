@@ -13,6 +13,7 @@ from models.investigation import (
     FinalReportResult,
     InvestigationPlan,
     InvestigationWorkspace,
+    ReceiptsResult,
     RetrievalResult,
     SourceDiversityResult,
     TimelineResult,
@@ -102,6 +103,7 @@ class InvestigationRepository:
             counter_narratives=self.get_counter_narrative_result(investigation_id),
             analyst=self.get_analyst_result(investigation_id),
             claim_counterpoints=self.get_claim_counterpoint_result(investigation_id),
+            receipts=self.get_receipts_result(investigation_id),
             report=self.get_final_report_result(investigation_id),
         )
 
@@ -351,17 +353,27 @@ class InvestigationRepository:
             return None
         return AnalystResult.model_validate_json(row["result_json"])
 
-    def save_final_report_result(self, result: FinalReportResult) -> None:
+    def save_final_report_result(self, result: FinalReportResult, *, update_stage: bool = True) -> None:
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE investigations
-                SET status = ?, current_stage = ?, updated_at = ?
-                WHERE investigation_id = ?
-                """,
-                ("report_completed", "report", now, result.investigation_id),
-            )
+            if update_stage:
+                conn.execute(
+                    """
+                    UPDATE investigations
+                    SET status = ?, current_stage = ?, updated_at = ?
+                    WHERE investigation_id = ?
+                    """,
+                    ("report_completed", "report", now, result.investigation_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE investigations
+                    SET updated_at = ?
+                    WHERE investigation_id = ?
+                    """,
+                    (now, result.investigation_id),
+                )
             conn.execute(
                 """
                 INSERT INTO final_report_results (investigation_id, result_json, created_at, updated_at)
@@ -404,6 +416,38 @@ class InvestigationRepository:
         if not row:
             return None
         return ClaimCounterpointResult.model_validate_json(row["result_json"])
+
+    def save_receipts_result(self, result: ReceiptsResult) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE investigations
+                SET status = ?, current_stage = ?, updated_at = ?
+                WHERE investigation_id = ?
+                """,
+                ("receipts_completed", "receipts", now, result.investigation_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO receipts_results (investigation_id, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(investigation_id) DO UPDATE SET
+                    result_json=excluded.result_json,
+                    updated_at=excluded.updated_at
+                """,
+                (result.investigation_id, result.model_dump_json(), now, now),
+            )
+
+    def get_receipts_result(self, investigation_id: str) -> ReceiptsResult | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT result_json FROM receipts_results WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return ReceiptsResult.model_validate_json(row["result_json"])
 
     def get_final_report_result(self, investigation_id: str) -> FinalReportResult | None:
         with self._connect() as conn:
@@ -511,6 +555,13 @@ class InvestigationRepository:
                 );
 
                 CREATE TABLE IF NOT EXISTS claim_counterpoint_results (
+                    investigation_id TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS receipts_results (
                     investigation_id TEXT PRIMARY KEY,
                     result_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,

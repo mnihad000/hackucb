@@ -75,6 +75,7 @@ export function getTopClaims(workspace: LiveInvestigationWorkspace) {
 export function getLimitations(workspace: LiveInvestigationWorkspace) {
   const values = [
     ...(workspace.report?.limitations ?? []),
+    ...(workspace.receipts?.limitations ?? []),
     ...(workspace.analyst?.limitations ?? []),
     ...(workspace.timeline?.limitations ?? []),
     ...(workspace.counter_narratives?.limitations ?? []),
@@ -145,6 +146,8 @@ export function getStageLabel(workspace: LiveInvestigationWorkspace) {
       return "Analyst synthesis built";
     case "claim_counterpoint":
       return "Claim counterpoints built";
+    case "receipts":
+      return "Receipts built";
     case "report":
       return "Final report built";
     default:
@@ -384,19 +387,27 @@ function buildCurrentReceipts(
   const receipts: InvestigationReceipt[] = [];
 
   for (const claim of workspace.report?.key_claims ?? []) {
+    const primaryReceipt = claim.supporting_receipts[0];
     const primaryCitation = claim.citations[0];
+    const supportStatus = claim.support_status
+      ? claim.support_status.replaceAll("_", " ")
+      : claim.claim_type;
     receipts.push({
       id: claim.claim_id,
       claimId: claim.claim_id,
       quoteOrSnippet:
+        primaryReceipt?.evidence_span ??
+        primaryReceipt?.snippet ??
         primaryCitation?.snippet ??
         claim.claim_text,
-      sourceName: primaryCitation?.source_name ?? "RhetoriQ report",
+      sourceName: primaryReceipt?.source_name ?? primaryCitation?.source_name ?? "RhetoriQ report",
       supportReason:
+        primaryReceipt?.support_reason ??
         primaryCitation?.relevance_note ??
-        `${claim.claim_type} extracted from the report evidence packet.`,
-      title: primaryCitation?.title ?? claim.claim_text,
-      url: primaryCitation?.url,
+        `${supportStatus} claim extracted from the report evidence packet.`,
+      title: primaryReceipt?.title ?? primaryCitation?.title ?? claim.claim_text,
+      url: primaryReceipt?.url ?? primaryCitation?.url,
+      browserVerified: primaryReceipt?.verification_status === "verified",
     });
   }
 
@@ -483,6 +494,12 @@ function countWorkspaceReceipts(workspace: LiveInvestigationWorkspace) {
   const ids = new Set<string>();
 
   for (const claim of workspace.report?.key_claims ?? []) {
+    if (claim.supporting_receipts.length > 0 || claim.contradicting_receipts.length > 0) {
+      for (const receipt of [...claim.supporting_receipts, ...claim.contradicting_receipts]) {
+        ids.add(`claim-${claim.claim_id}-${receipt.document_id}`);
+      }
+      continue;
+    }
     ids.add(claim.claim_id);
   }
 
@@ -515,6 +532,8 @@ function formatStatus(status: LiveInvestigationWorkspace["status"]) {
       return "Analyst synthesis built";
     case "claim_counterpoint_completed":
       return "Claim counterpoints built";
+    case "receipts_completed":
+      return "Receipts built";
     case "report_completed":
       return "Final report built";
     default:
@@ -633,7 +652,7 @@ function buildCounterReceiptsFromPair(
     claimId: pair.claim_id,
     quoteOrSnippet: receipt.snippet ?? pair.counter_claim_text,
     sourceName: receipt.source_name,
-    supportReason: receipt.relevance_note,
+    supportReason: `${pair.counter_type.replaceAll("_", " ")} counterpoint. ${receipt.relevance_note}`,
     title: receipt.title,
     url: receipt.url,
   }));

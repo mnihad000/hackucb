@@ -3,6 +3,7 @@ from __future__ import annotations
 from models.document import Document
 from models.investigation import (
     AnalystResult,
+    ClaimReceiptReview,
     ClaimCounterpointPair,
     ClaimCounterpointResult,
     CandidateClaim,
@@ -11,6 +12,7 @@ from models.investigation import (
     FinalReportResult,
     FinalReportSections,
     InvestigationPlan,
+    ReceiptsResult,
     ReportCitation,
     RetrievalResult,
     TimelineResult,
@@ -86,6 +88,21 @@ def build_final_report(
     )
 
 
+def apply_receipts_annotations(
+    report: FinalReportResult,
+    receipts: ReceiptsResult | None,
+) -> FinalReportResult:
+    if receipts is None:
+        return report
+
+    reviews_by_claim_id = {review.claim_id: review for review in receipts.claim_receipts}
+    annotated_claims = [
+        _apply_claim_review(claim, reviews_by_claim_id.get(claim.claim_id))
+        for claim in report.key_claims
+    ]
+    return report.model_copy(update={"key_claims": annotated_claims})
+
+
 def _select_key_claims(claims: list[CandidateClaim]) -> list[CandidateClaim]:
     ranked = sorted(
         claims,
@@ -107,6 +124,24 @@ def _select_key_claims(claims: list[CandidateClaim]) -> list[CandidateClaim]:
         if len(selected) >= 5:
             break
     return selected
+
+
+def _apply_claim_review(
+    claim: FinalReportClaim,
+    review: ClaimReceiptReview | None,
+) -> FinalReportClaim:
+    if review is None:
+        return claim
+    return claim.model_copy(
+        update={
+            "support_status": review.support_status,
+            "support_summary": review.support_summary,
+            "supporting_receipts": review.supporting_receipts,
+            "contradicting_receipts": review.contradicting_receipts,
+            "missing_evidence_notes": review.missing_evidence_notes,
+            "verification_state": review.verification_state,
+        }
+    )
 
 
 def _build_report_claim(

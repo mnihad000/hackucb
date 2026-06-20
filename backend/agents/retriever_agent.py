@@ -21,6 +21,7 @@ from services.document_normalizer import DocumentNormalizer
 from services.document_store import live_store
 from services.investigation_repository import InvestigationRepository
 from services.page_fetcher import HttpPageFetcher
+from services.redis_vector_store import get_redis_vector_store
 from services.search_provider import SearchProvider, build_search_provider
 from services.source_profile_enricher import SourceProfileEnricher
 
@@ -54,6 +55,7 @@ class RetrieverAgent:
             self._provider = build_search_provider()
         self._fetcher = page_fetcher or HttpPageFetcher()
         self._normalizer = normalizer or DocumentNormalizer()
+        self._vector_store = get_redis_vector_store()
         self._source_profile_enricher = source_profile_enricher or SourceProfileEnricher()
 
     def retrieve(
@@ -167,6 +169,15 @@ class RetrieverAgent:
         for round_number, search_results in search_results_by_round.items():
             self._repository.save_search_results(investigation_id, round_number, search_results)
         live_store.save_batch(all_documents)
+
+        # Index newly retrieved documents in Redis for future semantic searches
+        if self._vector_store and all_documents:
+            try:
+                indexed = self._vector_store.add_documents_batch(all_documents[:20])
+                logger.info("Indexed %d documents in Redis vector store", indexed)
+            except Exception as exc:
+                logger.warning("Redis document indexing failed: %s", exc)
+
         return result
 
     def _retrieve_from_local_corpus(
@@ -179,6 +190,25 @@ class RetrieverAgent:
             for document in get_merged_documents(ALL_DOCUMENTS)
         ]
         scored_documents = self._score_documents(corpus, plan)
+
+        # Augment scores with Redis semantic search when available
+        semantic_scores: dict[str, float] = {}
+        if self._vector_store:
+            try:
+                queries = [plan.query_text] + list(plan.semantic_queries[:2])
+                for q in queries:
+                    for result in self._vector_store.semantic_search(q, limit=10):
+                        doc_id = result.id.replace("rq:doc:", "")
+                        semantic_scores[doc_id] = max(semantic_scores.get(doc_id, 0.0), result.score)
+                if semantic_scores:
+                    scored_documents = [
+                        (doc, score + semantic_scores.get(doc.id, 0.0) * 3.0)
+                        for doc, score in scored_documents
+                    ]
+                    scored_documents.sort(key=lambda item: item[1], reverse=True)
+                    logger.info("Redis semantic search boosted %d documents", len(semantic_scores))
+            except Exception as exc:
+                logger.warning("Redis semantic search unavailable, using keyword scoring: %s", exc)
         matched_documents = [
             (document, score) for document, score in scored_documents if score > 0
         ]

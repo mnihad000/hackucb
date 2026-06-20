@@ -15,8 +15,25 @@ class Settings(BaseSettings):
 
     # Real integration keys — unused in demo mode, swapped in later
     ANTHROPIC_API_KEY: str = ""
+
+    # Redis configuration
     REDIS_URL: str = "redis://localhost:6379"
+    REDIS_PASSWORD: str = ""
+    REDIS_DB: int = 0
+
+    # Redis features
+    ENABLE_VECTOR_SEARCH: bool = True
+    ENABLE_INVESTIGATION_CACHE: bool = True
+    CACHE_TTL_SECONDS: int = 3600
+
+    # Embedding configuration
+    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    EMBEDDING_DIMENSION: int = 384
+    BATCH_EMBED_SIZE: int = 32
+
+    # Other sponsor integrations
     BROWSERBASE_API_KEY: str = ""
+    BROWSERBASE_PROJECT_ID: str = ""
     ARIZE_API_KEY: str = ""
     ARIZE_SPACE_KEY: str = ""
     TAVILY_API_KEY: str = ""

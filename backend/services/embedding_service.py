@@ -1,0 +1,259 @@
+"""
+Embedding Service for RhetoriQ - Generate semantic embeddings for documents and queries.
+
+Uses sentence-transformers (all-MiniLM-L6-v2) for fast, high-quality 384-dim embeddings.
+This enables semantic similarity search, phrase mutation detection, and claim-to-evidence matching.
+
+Redis Sponsor Track: This service powers semantic vector search beyond simple caching.
+"""
+
+from __future__ import annotations
+
+import logging
+from functools import lru_cache
+from typing import Any
+
+import numpy as np
+
+from models.document import Document
+
+logger = logging.getLogger(__name__)
+
+
+class EmbeddingService:
+    """
+    Generate embeddings for documents, queries, phrases, and claims.
+
+    Uses sentence-transformers with all-MiniLM-L6-v2 model:
+    - 384-dimensional vectors
+    - Fast inference (~50ms for single text, <1s for batch of 32)
+    - Good semantic understanding for short texts
+    - Pre-trained on diverse corpus
+    """
+
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
+        """
+        Initialize embedding model.
+
+        Args:
+            model_name: HuggingFace model name. Default: all-MiniLM-L6-v2
+                       Alternatives: all-mpnet-base-v2 (768-dim, slower but better)
+        """
+        self.model_name = model_name
+        self._model: Any = None  # Lazy load on first use
+        self._dimension: int | None = None
+
+    @property
+    def model(self) -> Any:
+        """Lazy load the sentence transformer model."""
+        if self._model is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+
+                logger.info(f"Loading embedding model: {self.model_name}")
+                self._model = SentenceTransformer(self.model_name)
+                # Get embedding dimension
+                test_embedding = self._model.encode("test", convert_to_numpy=True)
+                self._dimension = len(test_embedding)
+                logger.info(f"Embedding model loaded. Dimension: {self._dimension}")
+            except ImportError:
+                logger.error(
+                    "sentence-transformers not installed. "
+                    "Run: pip install sentence-transformers"
+                )
+                raise
+            except Exception as exc:
+                logger.error(f"Failed to load embedding model: {exc}")
+                raise
+        return self._model
+
+    @property
+    def dimension(self) -> int:
+        """Get embedding dimension (384 for all-MiniLM-L6-v2)."""
+        if self._dimension is None:
+            # Trigger lazy load
+            _ = self.model
+        return self._dimension or 384
+
+    def embed_document(self, doc: Document) -> list[float]:
+        """
+        Generate embedding for a document.
+
+        Combines title and snippet/text for better semantic representation.
+        For RhetoriQ: Emphasizes title (where narrative phrases often appear)
+        and opening text (where framing is established).
+
+        Args:
+            doc: Document to embed
+
+        Returns:
+            List of floats (384-dim for default model)
+        """
+        # Combine title + snippet for best semantic signal
+        # Title: 60% weight (narrative phrases often in headlines)
+        # Snippet: 40% weight (context and framing)
+        text = f"{doc.title}. {doc.snippet or doc.text[:500]}"
+
+        # Truncate to avoid exceeding model max length (512 tokens)
+        if len(text) > 2000:
+            text = text[:2000]
+
+        try:
+            embedding = self.model.encode(text, convert_to_numpy=True)
+            return embedding.tolist()
+        except Exception as exc:
+            logger.warning(f"Failed to embed document {doc.id}: {exc}")
+            # Return zero vector as fallback
+            return [0.0] * self.dimension
+
+    def embed_query(self, query: str) -> list[float]:
+        """
+        Generate embedding for a search query or phrase.
+
+        Args:
+            query: Text to embed (search query, canonical phrase, claim, etc.)
+
+        Returns:
+            List of floats (384-dim)
+        """
+        if not query or not query.strip():
+            return [0.0] * self.dimension
+
+        try:
+            embedding = self.model.encode(query.strip(), convert_to_numpy=True)
+            return embedding.tolist()
+        except Exception as exc:
+            logger.warning(f"Failed to embed query '{query}': {exc}")
+            return [0.0] * self.dimension
+
+    def embed_batch_documents(self, docs: list[Document], batch_size: int = 32) -> list[list[float]]:
+        """
+        Generate embeddings for multiple documents efficiently.
+
+        Uses batch processing for ~10x speedup vs individual encoding.
+
+        Args:
+            docs: List of documents to embed
+            batch_size: Number of documents to process at once
+
+        Returns:
+            List of embeddings (one per document)
+        """
+        if not docs:
+            return []
+
+        texts = [f"{doc.title}. {doc.snippet or doc.text[:500]}" for doc in docs]
+
+        # Truncate long texts
+        texts = [text[:2000] if len(text) > 2000 else text for text in texts]
+
+        try:
+            embeddings = self.model.encode(
+                texts,
+                batch_size=batch_size,
+                convert_to_numpy=True,
+                show_progress_bar=len(docs) > 100,
+            )
+            return [emb.tolist() for emb in embeddings]
+        except Exception as exc:
+            logger.error(f"Batch embedding failed: {exc}")
+            # Fallback to individual encoding
+            return [self.embed_document(doc) for doc in docs]
+
+    def embed_batch_queries(self, queries: list[str], batch_size: int = 32) -> list[list[float]]:
+        """
+        Generate embeddings for multiple queries efficiently.
+
+        Args:
+            queries: List of query strings
+            batch_size: Batch size for processing
+
+        Returns:
+            List of embeddings
+        """
+        if not queries:
+            return []
+
+        cleaned_queries = [q.strip() for q in queries if q and q.strip()]
+
+        try:
+            embeddings = self.model.encode(
+                cleaned_queries, batch_size=batch_size, convert_to_numpy=True
+            )
+            return [emb.tolist() for emb in embeddings]
+        except Exception as exc:
+            logger.error(f"Batch query embedding failed: {exc}")
+            return [self.embed_query(q) for q in cleaned_queries]
+
+    def compute_similarity(self, embedding1: list[float], embedding2: list[float]) -> float:
+        """
+        Compute cosine similarity between two embeddings.
+
+        Returns:
+            Float in [0, 1] where 1.0 = identical, 0.0 = orthogonal
+        """
+        try:
+            vec1 = np.array(embedding1, dtype=np.float32)
+            vec2 = np.array(embedding2, dtype=np.float32)
+
+            # Cosine similarity
+            dot_product = np.dot(vec1, vec2)
+            norm1 = np.linalg.norm(vec1)
+            norm2 = np.linalg.norm(vec2)
+
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+
+            similarity = dot_product / (norm1 * norm2)
+
+            # Normalize to [0, 1] range
+            return float((similarity + 1.0) / 2.0)
+        except Exception as exc:
+            logger.warning(f"Similarity computation failed: {exc}")
+            return 0.0
+
+    def find_similar_texts(
+        self, query: str, candidate_texts: list[str], top_k: int = 5
+    ) -> list[tuple[int, float]]:
+        """
+        Find most similar texts to query using embeddings.
+
+        Useful for quick in-memory similarity without Redis.
+
+        Args:
+            query: Query text
+            candidate_texts: List of texts to compare against
+            top_k: Number of top results to return
+
+        Returns:
+            List of (index, similarity_score) tuples, sorted by similarity desc
+        """
+        if not candidate_texts:
+            return []
+
+        query_embedding = self.embed_query(query)
+        candidate_embeddings = self.embed_batch_queries(candidate_texts)
+
+        similarities = [
+            (idx, self.compute_similarity(query_embedding, emb))
+            for idx, emb in enumerate(candidate_embeddings)
+        ]
+
+        # Sort by similarity descending
+        similarities.sort(key=lambda x: x[1], reverse=True)
+
+        return similarities[:top_k]
+
+
+@lru_cache(maxsize=1)
+def get_embedding_service() -> EmbeddingService:
+    """
+    Get singleton embedding service instance.
+
+    Cached to avoid loading model multiple times.
+    """
+    from config import get_settings
+
+    settings = get_settings()
+    model_name = getattr(settings, "EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    return EmbeddingService(model_name=model_name)

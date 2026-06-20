@@ -1057,3 +1057,5 @@ Not:
 The strongest demo message is:
 
 > **RhetoriQ lets users ask about any political story, traces how the narrative evolved and spread, and backs every AI claim with clickable evidence.**
+
+more features next 

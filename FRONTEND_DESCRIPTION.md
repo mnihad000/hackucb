@@ -15,7 +15,7 @@ Two routes exist:
 
 ---
 
-## 2. Dashboard Page (what is currently shown)
+## 2. Dashboard Page (what is currently shown)...
 
 ### 2.1 Header
 Static nav bar with branding. No live data.

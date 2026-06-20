@@ -16,7 +16,7 @@ A judge should understand this within 30 seconds:
 
 The frontend should not feel like:
 
-- a generic chatbot
+- a generic chatbot...
 - a raw data dashboard
 - an architecture demo
 - a political bias scoreboard

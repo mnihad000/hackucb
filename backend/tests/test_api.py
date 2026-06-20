@@ -2,6 +2,7 @@ import sys
 import os
 from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+os.environ["DEMO_MODE"] = "true"
 
 import pytest
 from fastapi.testclient import TestClient

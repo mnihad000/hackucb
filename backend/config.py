@@ -1,9 +1,15 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+from pathlib import Path
+
+from pydantic import model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BACKEND_DIR = Path(__file__).resolve().parent
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=BACKEND_DIR / ".env", extra="ignore")
 
     DEMO_MODE: bool = True
 
@@ -33,6 +39,13 @@ class Settings(BaseSettings):
     MUTATION_SIMILARITY_LOW: float = 0.40
     MUTATION_SIMILARITY_HIGH: float = 0.85
     ENTITY_OVERLAP_WINDOW_HOURS: int = 72
+
+    @model_validator(mode="after")
+    def resolve_repo_relative_paths(self) -> "Settings":
+        db_path = Path(self.INVESTIGATION_DB_PATH)
+        if self.INVESTIGATION_DB_PATH != ":memory:" and not db_path.is_absolute():
+            self.INVESTIGATION_DB_PATH = str(BACKEND_DIR / db_path)
+        return self
 
 
 @lru_cache

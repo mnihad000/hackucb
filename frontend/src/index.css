@@ -1,0 +1,238 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --page: #f7faff;
+  --page-deep: #edf2f8;
+  --surface: rgba(255, 255, 255, 0.8);
+  --surface-strong: rgba(255, 255, 255, 0.9);
+  --border: rgba(23, 44, 71, 0.12);
+  --ink: #13233a;
+  --muted: #5d6d82;
+  --accent: #7c90ac;
+  --accent-soft: rgba(124, 144, 172, 0.12);
+}
+
+html {
+  min-height: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(193, 208, 227, 0.34), transparent 24rem),
+    radial-gradient(circle at bottom right, rgba(224, 232, 242, 0.58), transparent 26rem),
+    linear-gradient(180deg, var(--page) 0%, var(--page-deep) 100%);
+  color: var(--ink);
+  font-family: "Aptos", "Segoe UI", "Trebuchet MS", sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(19, 35, 58, 0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(19, 35, 58, 0.015) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(circle at center, black 42%, transparent 90%);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(124, 144, 172, 0.2);
+  color: var(--ink);
+}
+
+.surface-card {
+  border: 1px solid var(--border);
+  border-radius: 1.9rem;
+  background: var(--surface);
+  box-shadow: 0 28px 80px -42px rgba(19, 35, 58, 0.34);
+  backdrop-filter: blur(14px);
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 0.55rem 0.9rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.section-title {
+  color: var(--ink);
+  font-size: clamp(2.2rem, 3vw, 3.3rem);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.section-copy {
+  max-width: 44rem;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.9;
+}
+
+.data-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  padding: 0.65rem 0.95rem;
+  color: var(--accent);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.page-enter {
+  animation: page-rise 700ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.investigation-page {
+  position: relative;
+}
+
+.investigation-page::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 18% 14%, rgba(0, 0, 0, 0.035), transparent 18rem),
+    radial-gradient(circle at 82% 18%, rgba(0, 0, 0, 0.028), transparent 20rem),
+    linear-gradient(130deg, rgba(255, 255, 255, 0.5), transparent 34%);
+}
+
+.investigation-hero {
+  position: relative;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 253, 0.97), rgba(249, 249, 246, 0.94)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(249, 249, 246, 0.9));
+}
+
+.investigation-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(128deg, rgba(0, 0, 0, 0.03), transparent 32%),
+    linear-gradient(302deg, rgba(0, 0, 0, 0.024), transparent 28%);
+}
+
+.flowchart-canvas::before {
+  content: "";
+  position: absolute;
+  inset: 22px;
+  pointer-events: none;
+  border: 1px solid rgba(10, 10, 10, 0.08);
+  border-radius: 1rem;
+}
+
+.flowchart-canvas::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 251, 0.18), rgba(255, 255, 251, 0.06)),
+    linear-gradient(315deg, rgba(0, 0, 0, 0.02), transparent 44%);
+}
+
+.flowchart-panel {
+  position: relative;
+}
+
+.flowchart-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.03), transparent 28%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.22), transparent 40%);
+}
+
+.flow-detail-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(19, 35, 58, 0.18) transparent;
+}
+
+.flow-detail-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.flow-detail-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(19, 35, 58, 0.16);
+}
+
+.react-flow__attribution {
+  display: none;
+}
+
+.react-flow__pane {
+  cursor: grab;
+}
+
+.react-flow__pane:active {
+  cursor: grabbing;
+}
+
+.react-flow__handle {
+  opacity: 0;
+}
+
+@keyframes page-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

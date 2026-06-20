@@ -23,6 +23,7 @@ from services.investigation_repository import InvestigationRepository
 from services.page_fetcher import HttpPageFetcher
 from services.redis_vector_store import get_redis_vector_store
 from services.search_provider import SearchProvider, build_search_provider
+from services.source_profile_enricher import SourceProfileEnricher
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class RetrieverAgent:
         search_provider: SearchProvider | None = None,
         page_fetcher: HttpPageFetcher | None = None,
         normalizer: DocumentNormalizer | None = None,
+        source_profile_enricher: SourceProfileEnricher | None = None,
     ) -> None:
         self._settings = get_settings()
         self._repository = repository
@@ -54,6 +56,7 @@ class RetrieverAgent:
         self._fetcher = page_fetcher or HttpPageFetcher()
         self._normalizer = normalizer or DocumentNormalizer()
         self._vector_store = get_redis_vector_store()
+        self._source_profile_enricher = source_profile_enricher or SourceProfileEnricher()
 
     def retrieve(
         self,
@@ -142,6 +145,8 @@ class RetrieverAgent:
 
         scored_documents = self._score_documents(all_documents, plan)
         all_documents = [doc for doc, _ in scored_documents]
+        all_documents = self._source_profile_enricher.enrich_documents(all_documents)
+        scored_documents = [(all_documents[index], score) for index, (_doc, score) in enumerate(scored_documents)]
         coverage = self._build_coverage_summary(all_documents, all_rounds, len(all_rounds), plan)
         confidence = self._coverage_confidence(coverage)
         categorized = self._categorize_documents(scored_documents, plan)
@@ -220,6 +225,8 @@ class RetrieverAgent:
 
         selected_pairs = matched_documents[:12]
         selected_documents = [document for document, _score in selected_pairs]
+        selected_documents = self._source_profile_enricher.enrich_documents(selected_documents)
+        selected_pairs = [(selected_documents[index], score) for index, (_document, score) in enumerate(selected_pairs)]
         duplicates = self._detect_duplicates(selected_documents)
         queries = self._build_round_queries(plan, 1, [])
         coverage = self._build_coverage_summary(selected_documents, [], 1, plan)

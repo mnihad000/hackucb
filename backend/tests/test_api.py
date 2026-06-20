@@ -9,7 +9,13 @@ from fastapi.testclient import TestClient
 from main import app
 from api import narratives as narratives_api
 from models.document import Document
-from models.investigation import InvestigationPlan, RetrievalResult, TimelineResult
+from models.investigation import (
+    InvestigationPlan,
+    ReceiptsResult,
+    RetrievalResult,
+    SourceDiversityResult,
+    TimelineResult,
+)
 from services.document_store import live_store
 from services.investigation_repository import InvestigationRepository
 
@@ -86,10 +92,14 @@ def test_root():
     assert "endpoints" in data
     assert any("/api/investigate" in endpoint for endpoint in data["endpoints"])
     assert any("/api/investigations/{id}" in endpoint for endpoint in data["endpoints"])
+    assert any("/api/investigations/{id}/source-diversity" in endpoint for endpoint in data["endpoints"])
     assert any("/api/investigations/{id}/timeline" in endpoint for endpoint in data["endpoints"])
     assert any("/api/investigations/{id}/counter-narratives" in endpoint for endpoint in data["endpoints"])
     assert any("/api/investigations/{id}/analyst" in endpoint for endpoint in data["endpoints"])
+    assert any("/api/investigations/{id}/claim-counterpoints" in endpoint for endpoint in data["endpoints"])
+    assert any("/api/investigations/{id}/receipts" in endpoint for endpoint in data["endpoints"])
     assert any("/api/investigations/{id}/report" in endpoint for endpoint in data["endpoints"])
+    assert any("/api/trending" in endpoint for endpoint in data["endpoints"])
 
 
 def test_list_narratives():
@@ -241,7 +251,117 @@ def test_get_investigation_workspace_returns_persisted_artifacts(tmp_path, monke
     assert payload["plan"]["query_text"] == "Where did the 'hidden energy tax' narrative come from?"
     assert payload["retrieval"]["retrieved_document_ids"] == ["doc_1", "doc_2"]
     assert len(payload["retrieved_documents"]) == 2
+    assert payload["source_diversity"] is None
     assert payload["timeline"]["timeline_summary"] == "cached timeline"
+    assert payload["claim_counterpoints"] is None
+    assert payload["receipts"] is None
+
+
+def test_source_diversity_endpoint_builds_artifact_from_persisted_state(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    plan_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Where did the 'hidden energy tax' narrative come from?"},
+    )
+    investigation_id = plan_response.json()["investigation_id"]
+    plan = repo.get_plan(investigation_id)
+    assert plan is not None
+
+    repo.save_retrieval_result(_timeline_retrieval(investigation_id, plan), _timeline_docs())
+
+    response = client.post(f"/api/investigations/{investigation_id}/source-diversity", json={})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["investigation_id"] == investigation_id
+    assert payload["total_documents"] == 2
+    assert payload["source_type_distribution"]["local_news"] == 1
+
+
+def test_source_diversity_endpoint_returns_cached_artifact_when_available(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    plan_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Where did the 'hidden energy tax' narrative come from?"},
+    )
+    investigation_id = plan_response.json()["investigation_id"]
+    plan = repo.get_plan(investigation_id)
+    assert plan is not None
+    repo.save_retrieval_result(_timeline_retrieval(investigation_id, plan), _timeline_docs())
+    repo.save_source_diversity_result(
+        SourceDiversityResult(
+            investigation_id=investigation_id,
+            plan_snapshot=plan,
+            total_documents=2,
+            classified_documents=2,
+            source_type_distribution={"local_news": 1, "national_news": 1},
+            geographic_distribution={"local": 1, "national": 1},
+            institution_distribution={"media": 2},
+            content_form_distribution={"original_reporting": 2},
+            ideology_distribution={"unknown": 2},
+            findings=[],
+            limitations=[],
+            confidence_score=0.6,
+            confidence_label="medium",
+        )
+    )
+
+    def _unexpected_build(*args, **kwargs):
+        raise AssertionError("source diversity builder should not run when cache is available")
+
+    monkeypatch.setattr(narratives_api, "build_source_diversity_artifact", _unexpected_build)
+
+    response = client.post(f"/api/investigations/{investigation_id}/source-diversity", json={})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["cached"] is True
+
+
+def test_source_diversity_endpoint_force_refresh_recomputes(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    plan_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Where did the 'hidden energy tax' narrative come from?"},
+    )
+    investigation_id = plan_response.json()["investigation_id"]
+    plan = repo.get_plan(investigation_id)
+    assert plan is not None
+    repo.save_retrieval_result(_timeline_retrieval(investigation_id, plan), _timeline_docs())
+
+    calls = {"count": 0}
+
+    def _stub_build_source_diversity(inv_id, plan_arg, retrieval_arg, docs_arg):
+        calls["count"] += 1
+        return SourceDiversityResult(
+            investigation_id=inv_id,
+            plan_snapshot=plan_arg,
+            total_documents=len(docs_arg),
+            classified_documents=len(docs_arg),
+            source_type_distribution={"local_news": 1, "national_news": 1},
+            geographic_distribution={"local": 1, "national": 1},
+            institution_distribution={"media": 2},
+            content_form_distribution={"original_reporting": 2},
+            ideology_distribution={"unknown": 2},
+            findings=[],
+            limitations=[],
+            confidence_score=0.7,
+            confidence_label="medium",
+        )
+
+    monkeypatch.setattr(narratives_api, "build_source_diversity_artifact", _stub_build_source_diversity)
+
+    response = client.post(
+        f"/api/investigations/{investigation_id}/source-diversity",
+        json={"force_refresh": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["total_documents"] == 2
+    assert calls["count"] == 1
 
 
 def test_get_investigation_workspace_404s_when_missing(tmp_path, monkeypatch):
@@ -452,6 +572,7 @@ def test_analyst_endpoint_builds_artifact_from_persisted_state(tmp_path, monkeyp
     assert payload["investigation_id"] == investigation_id
     assert "draft_report_sections" in payload
     assert len(payload["candidate_claims"]) > 0
+    assert repo.get_source_diversity_result(investigation_id) is not None
 
 
 def test_analyst_endpoint_404s_without_retrieval_result(tmp_path, monkeypatch):
@@ -465,6 +586,115 @@ def test_analyst_endpoint_404s_without_retrieval_result(tmp_path, monkeypatch):
     investigation_id = plan_response.json()["investigation_id"]
 
     response = client.post(f"/api/investigations/{investigation_id}/analyst", json={})
+    assert response.status_code == 404
+
+
+def test_claim_counterpoints_endpoint_builds_artifact_from_persisted_state(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    plan_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Where did the 'hidden energy tax' narrative come from?"},
+    )
+    assert plan_response.status_code == 200
+    investigation_id = plan_response.json()["investigation_id"]
+    plan = repo.get_plan(investigation_id)
+    assert plan is not None
+
+    retrieval = _timeline_retrieval(investigation_id, plan).model_copy(
+        update={
+            "counter_narrative_candidate_ids": ["doc_2"],
+            "main_narrative_document_ids": ["doc_1"],
+        }
+    )
+    repo.save_retrieval_result(retrieval, _timeline_docs())
+
+    response = client.post(f"/api/investigations/{investigation_id}/claim-counterpoints", json={})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["investigation_id"] == investigation_id
+    assert "pairs" in payload
+    assert "unmatched_claim_ids" in payload
+
+
+def test_receipts_endpoint_builds_artifact_from_persisted_state(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    plan_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Where did the 'hidden energy tax' narrative come from?"},
+    )
+    assert plan_response.status_code == 200
+    investigation_id = plan_response.json()["investigation_id"]
+    plan = repo.get_plan(investigation_id)
+    assert plan is not None
+
+    retrieval = _timeline_retrieval(investigation_id, plan).model_copy(
+        update={
+            "counter_narrative_candidate_ids": ["doc_2"],
+            "main_narrative_document_ids": ["doc_1"],
+        }
+    )
+    repo.save_retrieval_result(retrieval, _timeline_docs())
+
+    response = client.post(f"/api/investigations/{investigation_id}/receipts", json={})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["investigation_id"] == investigation_id
+    assert "claim_receipts" in payload
+    assert repo.get_receipts_result(investigation_id) is not None
+    saved_report = repo.get_final_report_result(investigation_id)
+    assert saved_report is not None
+    assert "support_status" in saved_report.model_dump()["key_claims"][0]
+
+
+def test_receipts_endpoint_returns_cached_artifact_when_available(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    plan_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Where did the 'hidden energy tax' narrative come from?"},
+    )
+    investigation_id = plan_response.json()["investigation_id"]
+    plan = repo.get_plan(investigation_id)
+    assert plan is not None
+    repo.save_retrieval_result(_timeline_retrieval(investigation_id, plan), _timeline_docs())
+    repo.save_receipts_result(
+        ReceiptsResult(
+            investigation_id=investigation_id,
+            plan_snapshot=plan,
+            claim_receipts=[],
+            counter_claim_receipts=[],
+            limitations=[],
+            confidence_score=0.4,
+            confidence_label="low",
+        )
+    )
+
+    def _unexpected_build(*args, **kwargs):
+        raise AssertionError("receipts builder should not run when cache is available")
+
+    monkeypatch.setattr(narratives_api, "build_receipts_artifact", _unexpected_build)
+
+    response = client.post(f"/api/investigations/{investigation_id}/receipts", json={})
+    assert response.status_code == 200
+    assert response.json()["cached"] is True
+
+
+def test_receipts_endpoint_404s_without_retrieval_result(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    plan_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Where did the 'hidden energy tax' narrative come from?"},
+    )
+    investigation_id = plan_response.json()["investigation_id"]
+
+    response = client.post(f"/api/investigations/{investigation_id}/receipts", json={})
     assert response.status_code == 404
 
 
@@ -496,6 +726,10 @@ def test_final_report_endpoint_builds_artifact_from_persisted_state(tmp_path, mo
     assert payload["report_title"]
     assert payload["key_claims"]
     assert payload["evidence_packet"]
+    assert "counterpoint_summary" in payload["key_claims"][0]
+    assert "support_status" in payload["key_claims"][0]
+    assert repo.get_source_diversity_result(investigation_id) is not None
+    assert repo.get_receipts_result(investigation_id) is not None
 
 
 def test_final_report_endpoint_404s_without_retrieval_result(tmp_path, monkeypatch):

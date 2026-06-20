@@ -2,7 +2,13 @@ from datetime import datetime
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
-from models.document import Document
+from models.document import (
+    Document,
+    SourceClassificationConfidence,
+    SourceContentForm,
+    SourceIdeology,
+    SourceInstitutionKind,
+)
 
 
 PlannerIntent = Literal[
@@ -17,12 +23,25 @@ RetrievalMode = Literal["broad", "narrow"]
 InvestigationStatus = Literal[
     "planning_completed",
     "retrieval_completed",
+    "source_diversity_completed",
     "timeline_completed",
     "counter_narrative_completed",
     "analyst_completed",
+    "claim_counterpoint_completed",
+    "receipts_completed",
     "report_completed",
 ]
-InvestigationStage = Literal["planner", "retriever", "timeline", "counter_narrative", "analyst", "report"]
+InvestigationStage = Literal[
+    "planner",
+    "retriever",
+    "source_diversity",
+    "timeline",
+    "counter_narrative",
+    "analyst",
+    "claim_counterpoint",
+    "receipts",
+    "report",
+]
 CoverageConfidence = Literal["low", "medium", "high"]
 TimelineEventType = Literal[
     "first_observed",
@@ -39,7 +58,27 @@ CounterNarrativeRelationship = Literal["opposing", "reframing", "corrective"]
 CounterNarrativeConfidenceLabel = Literal["low", "medium", "high"]
 ClaimType = Literal["observed_fact", "inference", "uncertainty", "limitation", "recommendation"]
 AnalystConfidenceLabel = Literal["low", "medium", "high"]
+ClaimCounterpointType = Literal["opposing", "corrective", "reframing"]
+ClaimCounterpointConfidenceLabel = Literal["low", "medium", "high"]
+ClaimSupportStatus = Literal[
+    "supported",
+    "partially_supported",
+    "unsupported",
+    "contradicted",
+    "insufficient_evidence",
+]
+ReceiptVerificationStatus = Literal["verified", "unavailable", "metadata_mismatch", "pending"]
+ClaimVerificationState = Literal[
+    "verified",
+    "mixed",
+    "metadata_mismatch",
+    "unavailable",
+    "pending",
+    "not_available",
+]
+ReceiptsConfidenceLabel = Literal["low", "medium", "high"]
 ReportConfidenceLabel = Literal["low", "medium", "high"]
+SourceDiversityConfidenceLabel = Literal["low", "medium", "high"]
 
 
 class InvestigationPlanTimeWindow(BaseModel):
@@ -159,6 +198,35 @@ class RetrieveRequest(BaseModel):
     max_rounds: int | None = Field(default=None, ge=1, le=6)
 
 
+class SourceDiversityFinding(BaseModel):
+    id: str
+    label: str
+    detail: str
+
+
+class SourceDiversityResult(BaseModel):
+    investigation_id: str
+    plan_snapshot: InvestigationPlan
+    total_documents: int = 0
+    classified_documents: int = 0
+    source_type_distribution: dict[str, int] = Field(default_factory=dict)
+    geographic_distribution: dict[str, int] = Field(default_factory=dict)
+    institution_distribution: dict[SourceInstitutionKind, int] = Field(default_factory=dict)
+    content_form_distribution: dict[SourceContentForm, int] = Field(default_factory=dict)
+    ideology_distribution: dict[SourceIdeology, int] = Field(default_factory=dict)
+    findings: list[SourceDiversityFinding] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    confidence_label: SourceDiversityConfidenceLabel
+    cached: bool = False
+
+
+class SourceDiversityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force_refresh: bool = False
+
+
 class TimelineEvent(BaseModel):
     id: str
     document_id: str
@@ -269,6 +337,82 @@ class ReportCitation(BaseModel):
     relevance_note: str
 
 
+class ClaimCounterpointPair(BaseModel):
+    claim_id: str
+    main_claim_text: str
+    counter_claim_text: str
+    counter_type: ClaimCounterpointType
+    relationship_summary: str
+    supporting_document_ids: list[str] = Field(default_factory=list)
+    counter_document_ids: list[str] = Field(default_factory=list)
+    main_receipts: list["ReportCitation"] = Field(default_factory=list)
+    counter_receipts: list["ReportCitation"] = Field(default_factory=list)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    caveats: list[str] = Field(default_factory=list)
+
+
+class ClaimCounterpointResult(BaseModel):
+    investigation_id: str
+    plan_snapshot: InvestigationPlan
+    pairs: list[ClaimCounterpointPair] = Field(default_factory=list)
+    unmatched_claim_ids: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    confidence_label: ClaimCounterpointConfidenceLabel
+    cached: bool = False
+
+
+class ClaimCounterpointRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force_refresh: bool = False
+
+
+class ReceiptEvidence(BaseModel):
+    document_id: str
+    source_name: str
+    source_type: str
+    title: str
+    url: str
+    published_at: datetime | None = None
+    snippet: str | None = None
+    evidence_span: str
+    support_reason: str
+    matched_terms: list[str] = Field(default_factory=list)
+    verification_status: ReceiptVerificationStatus = "pending"
+
+
+class ClaimReceiptReview(BaseModel):
+    claim_id: str
+    claim_text: str
+    claim_side: Literal["main", "counter"]
+    support_status: ClaimSupportStatus
+    support_summary: str
+    supporting_receipts: list[ReceiptEvidence] = Field(default_factory=list)
+    contradicting_receipts: list[ReceiptEvidence] = Field(default_factory=list)
+    missing_evidence_notes: list[str] = Field(default_factory=list)
+    verification_state: ClaimVerificationState
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    caveats: list[str] = Field(default_factory=list)
+
+
+class ReceiptsResult(BaseModel):
+    investigation_id: str
+    plan_snapshot: InvestigationPlan
+    claim_receipts: list[ClaimReceiptReview] = Field(default_factory=list)
+    counter_claim_receipts: list[ClaimReceiptReview] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    confidence_label: ReceiptsConfidenceLabel
+    cached: bool = False
+
+
+class ReceiptsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force_refresh: bool = False
+
+
 class FinalReportClaim(BaseModel):
     claim_id: str
     claim_text: str
@@ -276,6 +420,15 @@ class FinalReportClaim(BaseModel):
     confidence_score: float = Field(ge=0.0, le=1.0)
     caveats: list[str] = Field(default_factory=list)
     citations: list[ReportCitation] = Field(default_factory=list)
+    support_status: ClaimSupportStatus | None = None
+    support_summary: str | None = None
+    supporting_receipts: list[ReceiptEvidence] = Field(default_factory=list)
+    contradicting_receipts: list[ReceiptEvidence] = Field(default_factory=list)
+    missing_evidence_notes: list[str] = Field(default_factory=list)
+    verification_state: ClaimVerificationState | None = None
+    counterpoint_summary: str | None = None
+    counterpoint_type: ClaimCounterpointType | None = None
+    counter_citations: list[ReportCitation] = Field(default_factory=list)
 
 
 class FinalReportSections(BaseModel):
@@ -320,7 +473,10 @@ class InvestigationWorkspace(BaseModel):
     plan: InvestigationPlan | None = None
     retrieval: RetrievalResult | None = None
     retrieved_documents: list[Document] = Field(default_factory=list)
+    source_diversity: SourceDiversityResult | None = None
     timeline: TimelineResult | None = None
     counter_narratives: CounterNarrativeResult | None = None
     analyst: AnalystResult | None = None
+    claim_counterpoints: ClaimCounterpointResult | None = None
+    receipts: ReceiptsResult | None = None
     report: FinalReportResult | None = None

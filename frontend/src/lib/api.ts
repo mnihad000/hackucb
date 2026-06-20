@@ -1,4 +1,8 @@
-import type { LiveInvestigationWorkspace } from "../types/rhetoriq";
+import type {
+  LiveInvestigationWorkspace,
+  LiveTrendingFeed,
+  LiveTrendingInvestigationResponse,
+} from "../types/rhetoriq";
 
 const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
@@ -56,6 +60,19 @@ export async function createInvestigation(queryText: string) {
   });
 }
 
+export async function getTrendingFeed(limit = 6) {
+  return request<LiveTrendingFeed>(`/api/trending?limit=${limit}`);
+}
+
+export async function startTrendingInvestigation(topicId: string) {
+  return request<LiveTrendingInvestigationResponse>(
+    `/api/trending/${topicId}/investigate`,
+    {
+      method: "POST",
+    },
+  );
+}
+
 export async function getInvestigationWorkspace(investigationId: string) {
   return request<LiveInvestigationWorkspace>(
     `/api/investigations/${investigationId}`,
@@ -76,6 +93,13 @@ export async function runTimeline(investigationId: string) {
   });
 }
 
+export async function runSourceDiversity(investigationId: string) {
+  return request(`/api/investigations/${investigationId}/source-diversity`, {
+    body: {},
+    method: "POST",
+  });
+}
+
 export async function runCounterNarratives(investigationId: string) {
   return request(`/api/investigations/${investigationId}/counter-narratives`, {
     body: {},
@@ -85,6 +109,20 @@ export async function runCounterNarratives(investigationId: string) {
 
 export async function runAnalyst(investigationId: string) {
   return request(`/api/investigations/${investigationId}/analyst`, {
+    body: {},
+    method: "POST",
+  });
+}
+
+export async function runClaimCounterpoints(investigationId: string) {
+  return request(`/api/investigations/${investigationId}/claim-counterpoints`, {
+    body: {},
+    method: "POST",
+  });
+}
+
+export async function runReceipts(investigationId: string) {
+  return request(`/api/investigations/${investigationId}/receipts`, {
     body: {},
     method: "POST",
   });

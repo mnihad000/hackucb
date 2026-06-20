@@ -5,9 +5,12 @@ import type {
   InvestigationFlowchartData,
   InvestigationNode,
   InvestigationReceipt,
+  InvestigationNodeSource,
+  LiveClaimCounterpointPair,
   LiveCounterNarrative,
   LiveDocument,
   LiveFinalReportClaim,
+  LiveSourceDiversityResult,
   LiveInvestigationWorkspace,
   LiveTimelineEvent,
 } from "../types/rhetoriq";
@@ -72,9 +75,11 @@ export function getTopClaims(workspace: LiveInvestigationWorkspace) {
 export function getLimitations(workspace: LiveInvestigationWorkspace) {
   const values = [
     ...(workspace.report?.limitations ?? []),
+    ...(workspace.receipts?.limitations ?? []),
     ...(workspace.analyst?.limitations ?? []),
     ...(workspace.timeline?.limitations ?? []),
     ...(workspace.counter_narratives?.limitations ?? []),
+    ...(workspace.claim_counterpoints?.limitations ?? []),
   ];
 
   return Array.from(new Set(values));
@@ -97,18 +102,52 @@ export function getCoverageHighlights(workspace: LiveInvestigationWorkspace) {
   ];
 }
 
+export function getSourceDiversityHighlights(workspace: LiveInvestigationWorkspace) {
+  const diversity = workspace.source_diversity;
+  if (!diversity) {
+    return [];
+  }
+
+  return [
+    `${diversity.classified_documents}/${diversity.total_documents} docs classified`,
+    summarizeDistribution(diversity.source_type_distribution),
+    summarizeDistribution(diversity.institution_distribution),
+  ].filter(Boolean) as string[];
+}
+
+export function getSourceDiversityFindings(workspace: LiveInvestigationWorkspace) {
+  return workspace.source_diversity?.findings ?? [];
+}
+
+export function getSourceDiversityCaveat(diversity: LiveSourceDiversityResult | null | undefined) {
+  if (!diversity) {
+    return null;
+  }
+  const unknownInstitutionCount = diversity.institution_distribution.unknown ?? 0;
+  if (unknownInstitutionCount > 0) {
+    return `Source diversity provides context about the observed dataset. ${unknownInstitutionCount} source labels remain unknown, so this is not a truth score or moral judgment.`;
+  }
+  return "Source diversity provides context about the observed dataset. It is not a truth score or moral judgment.";
+}
+
 export function getStageLabel(workspace: LiveInvestigationWorkspace) {
   switch (workspace.current_stage) {
     case "planner":
       return "Planner completed";
     case "retriever":
       return "Retrieval completed";
+    case "source_diversity":
+      return "Source diversity built";
     case "timeline":
       return "Timeline built";
     case "counter_narrative":
       return "Counter-narratives built";
     case "analyst":
       return "Analyst synthesis built";
+    case "claim_counterpoint":
+      return "Claim counterpoints built";
+    case "receipts":
+      return "Receipts built";
     case "report":
       return "Final report built";
     default:
@@ -124,6 +163,7 @@ function buildFlowchartData(
   workspace: LiveInvestigationWorkspace,
 ): InvestigationFlowchartData {
   const currentNodeId = "current-narrative";
+  const strongestCounterpoint = getStrongestCounterpointPair(workspace);
   const docsById = new Map(
     workspace.retrieved_documents.map((document) => [document.id, document]),
   );
@@ -132,7 +172,7 @@ function buildFlowchartData(
       new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
   );
   const timelineNodes = timelineEvents.map((event, index) =>
-    toTimelineNode(event, index, docsById),
+    toTimelineNode(event, index, docsById, workspace),
   );
   const counterNodes = (workspace.counter_narratives?.counter_narratives ?? []).map(
     (item, index) => toCounterNode(item, index, docsById),
@@ -167,8 +207,8 @@ function buildFlowchartData(
       workspace.report?.report_summary ??
       workspace.analyst?.draft_report_sections.executive_summary ??
       workspace.timeline?.timeline_summary,
-    sources: buildCurrentSources(workspace, docsById),
-    receipts: buildCurrentReceipts(workspace),
+    sources: buildCurrentSources(workspace, docsById, strongestCounterpoint),
+    receipts: buildCurrentReceipts(workspace, strongestCounterpoint),
   };
 
   const nodes = [...timelineNodes, ...counterNodes, currentNode];
@@ -189,9 +229,13 @@ function toTimelineNode(
   event: LiveTimelineEvent,
   index: number,
   docsById: Map<string, LiveDocument>,
+  workspace: LiveInvestigationWorkspace,
 ): InvestigationNode {
   const document = docsById.get(event.document_id);
   const nodeId = `timeline-${event.id}`;
+  const counterpoint = getBestCounterpointPairForDocumentIds(workspace, [event.document_id]);
+  const baseSources = document ? [toSource(document)] : [];
+  const baseReceipts = [toReceipt(event, document)];
 
   return {
     id: nodeId,
@@ -202,10 +246,19 @@ function toTimelineNode(
     status: index === 0 ? "emerging" : "amplifying",
     confidence: toConfidenceLabel(event.importance_score),
     sourceCount: 1,
-    receiptCount: 1,
-    summary: event.explanation,
-    sources: document ? [toSource(document)] : [],
-    receipts: [toReceipt(event, document)],
+    counterSourceCount: counterpoint?.counter_document_ids.length ?? 0,
+    receiptCount: baseReceipts.length + (counterpoint?.counter_receipts.length ?? 0),
+    summary: counterpoint
+      ? `${event.explanation} ${counterpoint.relationship_summary}`
+      : event.explanation,
+    sources: [
+      ...baseSources,
+      ...buildCounterSourcesFromPair(counterpoint),
+    ],
+    receipts: [
+      ...baseReceipts,
+      ...buildCounterReceiptsFromPair(counterpoint),
+    ],
   };
 }
 
@@ -299,6 +352,7 @@ function buildEdges(
 function buildCurrentSources(
   workspace: LiveInvestigationWorkspace,
   docsById: Map<string, LiveDocument>,
+  counterpoint?: LiveClaimCounterpointPair | null,
 ) {
   const topDocIds =
     workspace.retrieval?.high_relevance_document_ids ??
@@ -320,30 +374,44 @@ function buildCurrentSources(
     }
   }
 
-  return Array.from(byDocId.values()).slice(0, 6).map(toSource);
+  return [
+    ...Array.from(byDocId.values()).slice(0, 6).map(toSource),
+    ...buildCounterSourcesFromPair(counterpoint ?? null),
+  ];
 }
 
-function buildCurrentReceipts(workspace: LiveInvestigationWorkspace) {
+function buildCurrentReceipts(
+  workspace: LiveInvestigationWorkspace,
+  counterpoint?: LiveClaimCounterpointPair | null,
+) {
   const receipts: InvestigationReceipt[] = [];
 
   for (const claim of workspace.report?.key_claims ?? []) {
+    const primaryReceipt = claim.supporting_receipts[0];
     const primaryCitation = claim.citations[0];
+    const supportStatus = claim.support_status
+      ? claim.support_status.replaceAll("_", " ")
+      : claim.claim_type;
     receipts.push({
       id: claim.claim_id,
       claimId: claim.claim_id,
       quoteOrSnippet:
+        primaryReceipt?.evidence_span ??
+        primaryReceipt?.snippet ??
         primaryCitation?.snippet ??
         claim.claim_text,
-      sourceName: primaryCitation?.source_name ?? "RhetoriQ report",
+      sourceName: primaryReceipt?.source_name ?? primaryCitation?.source_name ?? "RhetoriQ report",
       supportReason:
+        primaryReceipt?.support_reason ??
         primaryCitation?.relevance_note ??
-        `${claim.claim_type} extracted from the report evidence packet.`,
-      title: primaryCitation?.title ?? claim.claim_text,
-      url: primaryCitation?.url,
+        `${supportStatus} claim extracted from the report evidence packet.`,
+      title: primaryReceipt?.title ?? primaryCitation?.title ?? claim.claim_text,
+      url: primaryReceipt?.url ?? primaryCitation?.url,
+      browserVerified: primaryReceipt?.verification_status === "verified",
     });
   }
 
-  return receipts.slice(0, 6);
+  return [...receipts, ...buildCounterReceiptsFromPair(counterpoint ?? null)].slice(0, 8);
 }
 
 function toSource(document: LiveDocument) {
@@ -426,11 +494,23 @@ function countWorkspaceReceipts(workspace: LiveInvestigationWorkspace) {
   const ids = new Set<string>();
 
   for (const claim of workspace.report?.key_claims ?? []) {
+    if (claim.supporting_receipts.length > 0 || claim.contradicting_receipts.length > 0) {
+      for (const receipt of [...claim.supporting_receipts, ...claim.contradicting_receipts]) {
+        ids.add(`claim-${claim.claim_id}-${receipt.document_id}`);
+      }
+      continue;
+    }
     ids.add(claim.claim_id);
   }
 
   for (const event of workspace.timeline?.timeline_events ?? []) {
     ids.add(event.id);
+  }
+
+  for (const pair of workspace.claim_counterpoints?.pairs ?? []) {
+    for (const receipt of pair.counter_receipts) {
+      ids.add(`counter-${pair.claim_id}-${receipt.document_id}`);
+    }
   }
 
   return ids.size;
@@ -442,12 +522,18 @@ function formatStatus(status: LiveInvestigationWorkspace["status"]) {
       return "Planning completed";
     case "retrieval_completed":
       return "Retrieval completed";
+    case "source_diversity_completed":
+      return "Source diversity built";
     case "timeline_completed":
       return "Timeline built";
     case "counter_narrative_completed":
       return "Counter-narratives built";
     case "analyst_completed":
       return "Analyst synthesis built";
+    case "claim_counterpoint_completed":
+      return "Claim counterpoints built";
+    case "receipts_completed":
+      return "Receipts built";
     case "report_completed":
       return "Final report built";
     default:
@@ -492,4 +578,82 @@ function formatTime(value: string | null | undefined) {
   }
 
   return TIME_FORMATTER.format(new Date(value));
+}
+
+function summarizeDistribution(distribution: Record<string, number>) {
+  const entries = Object.entries(distribution)
+    .filter(([, count]) => count > 0)
+    .sort((left, right) => right[1] - left[1]);
+  if (entries.length === 0) {
+    return "";
+  }
+  const [label, count] = entries[0];
+  return `${count} ${label.replaceAll("_", " ")}`;
+}
+
+function getStrongestCounterpointPair(
+  workspace: LiveInvestigationWorkspace,
+): LiveClaimCounterpointPair | null {
+  const pairs = workspace.claim_counterpoints?.pairs ?? [];
+  if (pairs.length === 0) {
+    return null;
+  }
+  return [...pairs].sort((left, right) => right.confidence_score - left.confidence_score)[0];
+}
+
+function getBestCounterpointPairForDocumentIds(
+  workspace: LiveInvestigationWorkspace,
+  documentIds: string[],
+): LiveClaimCounterpointPair | null {
+  const pairs = workspace.claim_counterpoints?.pairs ?? [];
+  if (pairs.length === 0 || documentIds.length === 0) {
+    return null;
+  }
+
+  const wanted = new Set(documentIds);
+  const overlapping = pairs.filter((pair) =>
+    pair.supporting_document_ids.some((docId) => wanted.has(docId)),
+  );
+  if (overlapping.length === 0) {
+    return null;
+  }
+  return overlapping.sort((left, right) => right.confidence_score - left.confidence_score)[0];
+}
+
+function buildCounterSourcesFromPair(
+  pair: LiveClaimCounterpointPair | null,
+): InvestigationNodeSource[] {
+  if (!pair) {
+    return [];
+  }
+
+  return pair.counter_receipts.map((receipt) => ({
+    id: `counter-source-${pair.claim_id}-${receipt.document_id}`,
+    name: receipt.source_name,
+    type: `${pair.counter_type} counterpoint`,
+    title: receipt.title,
+    url: receipt.url,
+    publishedAt: formatDateTime(receipt.published_at),
+    snippet: receipt.snippet ?? pair.counter_claim_text,
+    stance: "opposing",
+    counterType: pair.counter_type,
+  }));
+}
+
+function buildCounterReceiptsFromPair(
+  pair: LiveClaimCounterpointPair | null,
+): InvestigationReceipt[] {
+  if (!pair) {
+    return [];
+  }
+
+  return pair.counter_receipts.map((receipt) => ({
+    id: `counter-receipt-${pair.claim_id}-${receipt.document_id}`,
+    claimId: pair.claim_id,
+    quoteOrSnippet: receipt.snippet ?? pair.counter_claim_text,
+    sourceName: receipt.source_name,
+    supportReason: `${pair.counter_type.replaceAll("_", " ")} counterpoint. ${receipt.relevance_note}`,
+    title: receipt.title,
+    url: receipt.url,
+  }));
 }

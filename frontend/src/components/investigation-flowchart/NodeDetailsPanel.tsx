@@ -260,7 +260,7 @@ function SourceGroup({
                 </div>
                 {source.stance ? (
                   <span className="rounded-full bg-[rgba(19,35,58,0.06)] px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
-                    {source.stance}
+                    {source.counterType ?? source.stance}
                   </span>
                 ) : null}
               </div>

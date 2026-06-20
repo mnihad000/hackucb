@@ -25,6 +25,51 @@ export type RadarTopic = {
   confidence: "Low" | "Medium" | "High";
 };
 
+export type TrendingFeedState = "warming" | "ready" | "stale" | "error";
+
+export type LiveTrendingTimelinePoint = {
+  timestamp: string;
+  count: number;
+};
+
+export type LiveTrendingTopic = {
+  id: string;
+  title: string;
+  canonical_phrase: string;
+  summary: string;
+  related_phrases: string[];
+  status: string;
+  confidence_label: "Low" | "Medium" | "High";
+  confidence_score: number;
+  source_count: number;
+  publisher_count: number;
+  first_observed_at: string;
+  latest_observed_at: string;
+  source_diversity_snapshot: Record<string, number>;
+  timeline: LiveTrendingTimelinePoint[];
+  velocity_score: number;
+  persistence_runs: number;
+  provider_mix: Record<string, number>;
+  supporting_document_ids: string[];
+};
+
+export type LiveTrendingFeed = {
+  state: TrendingFeedState;
+  generated_at?: string | null;
+  fresh_until?: string | null;
+  last_completed_run_at?: string | null;
+  last_reseed_at?: string | null;
+  warning?: string | null;
+  topics: LiveTrendingTopic[];
+};
+
+export type LiveTrendingInvestigationResponse = {
+  investigation_id: string;
+  reused_existing: boolean;
+  topic_id: string;
+  canonical_phrase: string;
+};
+
 export type RecentInvestigation = {
   id: string;
   title: string;
@@ -63,6 +108,7 @@ export type InvestigationNodeSource = {
   publishedAt?: string;
   snippet?: string;
   stance?: "supporting" | "opposing" | "context" | "unknown";
+  counterType?: "opposing" | "corrective" | "reframing";
 };
 
 export type InvestigationNode = {
@@ -141,17 +187,23 @@ export type InvestigationExperience = {
 export type InvestigationStage =
   | "planner"
   | "retriever"
+  | "source_diversity"
   | "timeline"
   | "counter_narrative"
   | "analyst"
+  | "claim_counterpoint"
+  | "receipts"
   | "report";
 
 export type InvestigationPipelineStatus =
   | "planning_completed"
   | "retrieval_completed"
+  | "source_diversity_completed"
   | "timeline_completed"
   | "counter_narrative_completed"
   | "analyst_completed"
+  | "claim_counterpoint_completed"
+  | "receipts_completed"
   | "report_completed";
 
 export type LiveInvestigationPlan = {
@@ -219,6 +271,44 @@ export type LiveDocument = {
   duplicate_of_doc_id: string | null;
   is_seeded_demo_data: boolean | null;
   metadata: Record<string, unknown> | null;
+  source_profile?: LiveSourceProfile | null;
+};
+
+export type LiveSourceProfile = {
+  institution_kind: "official" | "media" | "advocacy" | "independent" | "community" | "unknown";
+  content_form:
+    | "original_reporting"
+    | "reposting"
+    | "opinion"
+    | "transcript"
+    | "community_post"
+    | "unknown";
+  ideology: "left" | "center" | "right" | "unknown";
+  classification_method: "registry" | "heuristic" | "unknown";
+  classification_confidence: "low" | "medium" | "high";
+};
+
+export type LiveSourceDiversityFinding = {
+  id: string;
+  label: string;
+  detail: string;
+};
+
+export type LiveSourceDiversityResult = {
+  investigation_id: string;
+  plan_snapshot: LiveInvestigationPlan;
+  total_documents: number;
+  classified_documents: number;
+  source_type_distribution: Record<string, number>;
+  geographic_distribution: Record<string, number>;
+  institution_distribution: Record<string, number>;
+  content_form_distribution: Record<string, number>;
+  ideology_distribution: Record<string, number>;
+  findings: LiveSourceDiversityFinding[];
+  limitations: string[];
+  confidence_score: number;
+  confidence_label: InvestigationConfidence;
+  cached: boolean;
 };
 
 export type LiveTimelineEvent = {
@@ -311,6 +401,81 @@ export type LiveReportCitation = {
   relevance_note: string;
 };
 
+export type LiveReceiptEvidence = {
+  document_id: string;
+  source_name: string;
+  source_type: string;
+  title: string;
+  url: string;
+  published_at: string | null;
+  snippet: string | null;
+  evidence_span: string;
+  support_reason: string;
+  matched_terms: string[];
+  verification_status: "verified" | "unavailable" | "metadata_mismatch" | "pending";
+};
+
+export type LiveClaimCounterpointPair = {
+  claim_id: string;
+  main_claim_text: string;
+  counter_claim_text: string;
+  counter_type: "opposing" | "corrective" | "reframing";
+  relationship_summary: string;
+  supporting_document_ids: string[];
+  counter_document_ids: string[];
+  main_receipts: LiveReportCitation[];
+  counter_receipts: LiveReportCitation[];
+  confidence_score: number;
+  caveats: string[];
+};
+
+export type LiveClaimCounterpointResult = {
+  investigation_id: string;
+  plan_snapshot: LiveInvestigationPlan;
+  pairs: LiveClaimCounterpointPair[];
+  unmatched_claim_ids: string[];
+  limitations: string[];
+  confidence_score: number;
+  confidence_label: InvestigationConfidence;
+  cached: boolean;
+};
+
+export type LiveClaimReceiptReview = {
+  claim_id: string;
+  claim_text: string;
+  claim_side: "main" | "counter";
+  support_status:
+    | "supported"
+    | "partially_supported"
+    | "unsupported"
+    | "contradicted"
+    | "insufficient_evidence";
+  support_summary: string;
+  supporting_receipts: LiveReceiptEvidence[];
+  contradicting_receipts: LiveReceiptEvidence[];
+  missing_evidence_notes: string[];
+  verification_state:
+    | "verified"
+    | "mixed"
+    | "metadata_mismatch"
+    | "unavailable"
+    | "pending"
+    | "not_available";
+  confidence_score: number;
+  caveats: string[];
+};
+
+export type LiveReceiptsResult = {
+  investigation_id: string;
+  plan_snapshot: LiveInvestigationPlan;
+  claim_receipts: LiveClaimReceiptReview[];
+  counter_claim_receipts: LiveClaimReceiptReview[];
+  limitations: string[];
+  confidence_score: number;
+  confidence_label: InvestigationConfidence;
+  cached: boolean;
+};
+
 export type LiveFinalReportClaim = {
   claim_id: string;
   claim_text: string;
@@ -318,6 +483,28 @@ export type LiveFinalReportClaim = {
   confidence_score: number;
   caveats: string[];
   citations: LiveReportCitation[];
+  support_status:
+    | "supported"
+    | "partially_supported"
+    | "unsupported"
+    | "contradicted"
+    | "insufficient_evidence"
+    | null;
+  support_summary: string | null;
+  supporting_receipts: LiveReceiptEvidence[];
+  contradicting_receipts: LiveReceiptEvidence[];
+  missing_evidence_notes: string[];
+  verification_state:
+    | "verified"
+    | "mixed"
+    | "metadata_mismatch"
+    | "unavailable"
+    | "pending"
+    | "not_available"
+    | null;
+  counterpoint_summary: string | null;
+  counterpoint_type: "opposing" | "corrective" | "reframing" | null;
+  counter_citations: LiveReportCitation[];
 };
 
 export type LiveFinalReportResult = {
@@ -354,8 +541,11 @@ export type LiveInvestigationWorkspace = {
   plan: LiveInvestigationPlan | null;
   retrieval: LiveRetrievalResult | null;
   retrieved_documents: LiveDocument[];
+  source_diversity: LiveSourceDiversityResult | null;
   timeline: LiveTimelineResult | null;
   counter_narratives: LiveCounterNarrativeResult | null;
   analyst: LiveAnalystResult | null;
+  claim_counterpoints: LiveClaimCounterpointResult | null;
+  receipts: LiveReceiptsResult | null;
   report: LiveFinalReportResult | null;
 };

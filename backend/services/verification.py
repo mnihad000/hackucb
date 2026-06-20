@@ -47,7 +47,21 @@ class VerificationService:
                 "checked_at": None,
             }
 
-        raise NotImplementedError("Real Browserbase call not yet wired. Set DEMO_MODE=True.")
+        from agents.browserbase_agent import get_browserbase_agent
+        agent = get_browserbase_agent()
+        receipt = agent.verify_document(doc)
+        return {
+            "doc_id": doc.id,
+            "url": doc.url,
+            "verification_status": receipt.verified_status,
+            "live_title": receipt.live_title,
+            "stored_title": receipt.stored_title,
+            "snippet_match": receipt.evidence_snippet is not None,
+            "page_available": receipt.verified_status not in ("unavailable", "blocked"),
+            "checked_at": receipt.checked_at,
+            "support_reason": receipt.support_reason,
+            "author": receipt.author,
+        }
 
     def verify_evidence_items(self, evidence: list[EvidenceItem], all_docs: list[Document]) -> list[EvidenceItem]:
         """

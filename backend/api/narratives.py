@@ -29,6 +29,7 @@ from services.counter_narrative_builder import (
 from services.final_report_builder import build_final_report as build_final_report_artifact
 from services.graph_builder import GraphBuilder
 from services.ingestion import get_merged_documents
+from services.investigation_cache import get_investigation_cache
 from services.investigation_repository import InvestigationRepository
 from services.mutation_detection import MutationDetector
 from services.retrieval import Retriever
@@ -50,6 +51,7 @@ _mutation_detector = MutationDetector()
 _graph_builder = GraphBuilder()
 _verifier = VerificationService()
 _investigation_repo = InvestigationRepository(get_settings().INVESTIGATION_DB_PATH)
+_investigation_cache = get_investigation_cache()
 
 
 def _build_retriever_agent() -> RetrieverAgent:
@@ -100,9 +102,18 @@ def get_narrative_timeline(narrative_id: str) -> list[dict]:
     response_model=InvestigationWorkspace,
 )
 def get_investigation_workspace(investigation_id: str) -> InvestigationWorkspace:
+    if _investigation_cache:
+        cached = _investigation_cache.get_workspace(investigation_id)
+        if cached is not None:
+            return cached
+
     workspace = _investigation_repo.get_investigation_workspace(investigation_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
+
+    if _investigation_cache:
+        _investigation_cache.cache_workspace(workspace)
+
     return workspace
 
 
@@ -145,12 +156,15 @@ def retrieve(investigation_id: str, request: RetrieveRequest) -> RetrievalResult
 
     agent = _build_retriever_agent()
     try:
-        return agent.retrieve(
+        result = agent.retrieve(
             investigation_id=investigation_id,
             plan=plan,
             max_rounds=request.max_rounds,
             force_refresh=request.force_refresh,
         )
+        if _investigation_cache:
+            _investigation_cache.invalidate(investigation_id)
+        return result
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Retriever failed: {exc}") from exc
 
@@ -182,6 +196,8 @@ def timeline(investigation_id: str, request: TimelineRequest) -> TimelineResult:
     try:
         result = build_timeline_artifact(investigation_id, plan, retrieval, documents)
         _investigation_repo.save_timeline_result(result)
+        if _investigation_cache:
+            _investigation_cache.invalidate(investigation_id)
         return result
     except HTTPException:
         raise
@@ -222,6 +238,8 @@ def counter_narratives(
     try:
         result = build_counter_narratives_artifact(investigation_id, plan, retrieval, documents)
         _investigation_repo.save_counter_narrative_result(result)
+        if _investigation_cache:
+            _investigation_cache.invalidate(investigation_id)
         return result
     except HTTPException:
         raise
@@ -279,6 +297,8 @@ def analyst(
             counter_result,
         )
         _investigation_repo.save_analyst_result(result)
+        if _investigation_cache:
+            _investigation_cache.invalidate(investigation_id)
         return result
     except HTTPException:
         raise
@@ -349,11 +369,27 @@ def final_report(
             analyst_result,
         )
         _investigation_repo.save_final_report_result(result)
+        if _investigation_cache:
+            _investigation_cache.invalidate(investigation_id)
         return result
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Final report assembly failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# GET /api/cache/stats - Redis cache statistics (sponsor evidence)
+# ---------------------------------------------------------------------------
+
+@router.get("/cache/stats")
+def cache_stats() -> dict:
+    if _investigation_cache is None:
+        return {"redis_cache": "disabled", "reason": "Redis unavailable or cache disabled"}
+    stats = _investigation_cache.get_stats()
+    stats["redis_cache"] = "enabled"
+    stats["cached_investigations"] = _investigation_cache.list_cached_investigations(limit=20)
+    return stats
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +424,26 @@ def get_receipts(narrative_id: str) -> list[dict]:
 
     top_doc_ids = cluster.document_ids[:6]
     return _verifier.verify_batch(top_doc_ids, _active_documents())
+
+
+# ---------------------------------------------------------------------------
+# POST /api/investigations/{id}/verify - run Browserbase verification on top docs
+# ---------------------------------------------------------------------------
+
+@router.post("/investigations/{investigation_id}/verify")
+def verify_investigation_sources(investigation_id: str, max_docs: int = 6) -> list[dict]:
+    from agents.browserbase_agent import get_browserbase_agent
+
+    if not _investigation_repo.investigation_exists(investigation_id):
+        raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
+
+    documents = _investigation_repo.get_retrieved_documents(investigation_id)
+    if not documents:
+        raise HTTPException(status_code=404, detail="No retrieved documents for this investigation.")
+
+    agent = get_browserbase_agent()
+    receipts = agent.verify_documents(documents[:max_docs])
+    return [r.to_dict() for r in receipts]
 
 
 # ---------------------------------------------------------------------------

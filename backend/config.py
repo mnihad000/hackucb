@@ -33,6 +33,7 @@ class Settings(BaseSettings):
 
     # Other sponsor integrations
     BROWSERBASE_API_KEY: str = ""
+    BROWSERBASE_PROJECT_ID: str = ""
     ARIZE_API_KEY: str = ""
     ARIZE_SPACE_KEY: str = ""
     TAVILY_API_KEY: str = ""

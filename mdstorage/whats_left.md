@@ -12,12 +12,112 @@ The docs are not fully up to date with the code. `FRONTEND_DESCRIPTION.md` still
 
 What Is Left
 
+## Core Backend/Frontend Integration
+
 1. Mount the trending router in `backend/main.py` so the backend exposes the live radar endpoint.
 2. Wire the frontend dashboard radar to the backend trending endpoint instead of only using `frontend/src/lib/demoData.ts`.
 3. Add the missing investigation UI sections: timeline, narrative family tree, source diversity, agent debate, and receipts/report surface.
 4. Extend the live investigation payload with `source_diversity`, `family`, `agent_debate`, and stronger `receipts` data.
 5. Clean up docs that still describe older frontend/backend behavior.
 6. Remove the temporary backend split rules from `.gitignore` when making the final full-backend commit.
+
+## Redis Sponsor Integration (Phase 2 & 3)
+
+**Status:** Infrastructure complete (Phase 1), but not wired into backend yet.
+
+**Created (Phase 1 - DONE):**
+- `backend/services/embedding_service.py` - 384-dim semantic embeddings
+- `backend/services/redis_vector_store.py` - RediSearch vector similarity search
+- `backend/services/investigation_cache.py` - RedisJSON workspace caching
+- `backend/setup_redis.py` - Setup script and testing
+- `backend/tests/test_embedding_service.py` - Unit tests
+- `backend/tests/test_redis_vector_store.py` - Unit tests
+- Updated `backend/config.py` with Redis settings
+- Updated `backend/requirements.txt` with redis-om, numpy
+
+**Documentation (Phase 1 - DONE):**
+- `redis_integration.md` - Full implementation guide (1060 lines)
+- `REDIS_NEXT_STEPS.md` - Quick start guide
+- `docs/REDIS_SPONSOR_INTEGRATION.md` - Sponsor evidence template
+
+**Still TODO (Phase 2 - Integration):**
+
+7. **Run Redis setup** (if not done): `python backend/setup_redis.py`
+   - Tests Redis Cloud connection
+   - Creates RediSearch vector index
+   - Indexes demo documents with embeddings
+   - Verifies semantic search and caching work
+
+8. **Wire semantic search into Retriever Agent** (2-3 hours):
+   - Edit `backend/agents/retriever_agent.py`
+   - Add `RedisVectorStore` import and initialization
+   - Use vector search for `plan.semantic_queries` instead of just keyword search
+   - Combine vector results with keyword results (weighted ranking)
+   - Store agent round memory in Redis for query optimization
+
+9. **Add investigation caching to API endpoints** (1-2 hours):
+   - Edit `backend/api/narratives.py`
+   - Import `InvestigationCache` and initialize
+   - In `GET /api/investigations/{id}`, check cache before SQLite
+   - After each POST stage endpoint (retrieve, timeline, etc.), update cached artifact
+   - Add cache statistics endpoint for monitoring
+
+10. **Enable claim-to-evidence auto-matching** (1-2 hours):
+    - Edit `backend/services/final_report_builder.py`
+    - Use vector search to match each claim to supporting document snippets
+    - Generate citations automatically based on semantic similarity
+    - Add to `FinalReportClaim.citations` field
+
+11. **Generate embeddings for demo documents** (30 min):
+    - Create `backend/scripts/generate_embeddings.py`
+    - Batch-generate embeddings for `ALL_DOCUMENTS` from `demo_data.py`
+    - Store in Redis vector store for testing
+
+**Still TODO (Phase 3 - Testing & Evidence):**
+
+12. **Live integration testing** (30 min):
+    - Start backend with Redis connected
+    - Run full investigation with semantic queries
+    - Verify caching reduces API response times
+    - Test agent memory persistence across rounds
+
+13. **Collect sponsor track evidence**:
+    - Screenshot Redis Cloud dashboard showing active database
+    - Screenshot semantic search results from investigations
+    - Screenshot investigation cache hit/miss stats
+    - Measure before/after performance (cache hit vs miss)
+    - Document agent memory examples in RedisInsight
+    - Update `docs/REDIS_SPONSOR_INTEGRATION.md` with evidence
+
+14. **Performance benchmarking**:
+    - Measure investigation workspace fetch: cached vs uncached
+    - Measure semantic search latency for various query sizes
+    - Document cache hit rate over typical investigation workflow
+    - Show 10-100x improvement metrics for sponsor judges
+
+**Redis Integration Files:**
+```
+backend/
+  services/
+    embedding_service.py          ✅ Complete
+    redis_vector_store.py          ✅ Complete
+    investigation_cache.py         ✅ Complete
+  agents/
+    retriever_agent.py             ❌ Needs vector search integration
+  api/
+    narratives.py                  ❌ Needs caching integration
+  services/
+    final_report_builder.py        ❌ Needs claim-to-evidence matching
+  setup_redis.py                   ✅ Complete
+  tests/
+    test_embedding_service.py      ✅ Complete
+    test_redis_vector_store.py     ✅ Complete
+
+docs/
+  redis_integration.md             ✅ Complete
+  REDIS_NEXT_STEPS.md             ✅ Complete
+  REDIS_SPONSOR_INTEGRATION.md    ⚠️  Needs evidence screenshots
+```
 
 Current Agents
 

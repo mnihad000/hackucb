@@ -27,6 +27,7 @@ InvestigationStatus = Literal[
     "timeline_completed",
     "counter_narrative_completed",
     "analyst_completed",
+    "claim_counterpoint_completed",
     "report_completed",
 ]
 InvestigationStage = Literal[
@@ -36,6 +37,7 @@ InvestigationStage = Literal[
     "timeline",
     "counter_narrative",
     "analyst",
+    "claim_counterpoint",
     "report",
 ]
 CoverageConfidence = Literal["low", "medium", "high"]
@@ -54,6 +56,8 @@ CounterNarrativeRelationship = Literal["opposing", "reframing", "corrective"]
 CounterNarrativeConfidenceLabel = Literal["low", "medium", "high"]
 ClaimType = Literal["observed_fact", "inference", "uncertainty", "limitation", "recommendation"]
 AnalystConfidenceLabel = Literal["low", "medium", "high"]
+ClaimCounterpointType = Literal["opposing", "corrective", "reframing"]
+ClaimCounterpointConfidenceLabel = Literal["low", "medium", "high"]
 ReportConfidenceLabel = Literal["low", "medium", "high"]
 SourceDiversityConfidenceLabel = Literal["low", "medium", "high"]
 
@@ -314,6 +318,37 @@ class ReportCitation(BaseModel):
     relevance_note: str
 
 
+class ClaimCounterpointPair(BaseModel):
+    claim_id: str
+    main_claim_text: str
+    counter_claim_text: str
+    counter_type: ClaimCounterpointType
+    relationship_summary: str
+    supporting_document_ids: list[str] = Field(default_factory=list)
+    counter_document_ids: list[str] = Field(default_factory=list)
+    main_receipts: list["ReportCitation"] = Field(default_factory=list)
+    counter_receipts: list["ReportCitation"] = Field(default_factory=list)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    caveats: list[str] = Field(default_factory=list)
+
+
+class ClaimCounterpointResult(BaseModel):
+    investigation_id: str
+    plan_snapshot: InvestigationPlan
+    pairs: list[ClaimCounterpointPair] = Field(default_factory=list)
+    unmatched_claim_ids: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    confidence_label: ClaimCounterpointConfidenceLabel
+    cached: bool = False
+
+
+class ClaimCounterpointRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force_refresh: bool = False
+
+
 class FinalReportClaim(BaseModel):
     claim_id: str
     claim_text: str
@@ -321,6 +356,9 @@ class FinalReportClaim(BaseModel):
     confidence_score: float = Field(ge=0.0, le=1.0)
     caveats: list[str] = Field(default_factory=list)
     citations: list[ReportCitation] = Field(default_factory=list)
+    counterpoint_summary: str | None = None
+    counterpoint_type: ClaimCounterpointType | None = None
+    counter_citations: list[ReportCitation] = Field(default_factory=list)
 
 
 class FinalReportSections(BaseModel):
@@ -369,4 +407,5 @@ class InvestigationWorkspace(BaseModel):
     timeline: TimelineResult | None = None
     counter_narratives: CounterNarrativeResult | None = None
     analyst: AnalystResult | None = None
+    claim_counterpoints: ClaimCounterpointResult | None = None
     report: FinalReportResult | None = None

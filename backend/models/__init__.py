@@ -3,6 +3,9 @@ from .investigation import (
     AnalystRequest,
     AnalystResult,
     CandidateClaim,
+    ClaimCounterpointPair,
+    ClaimCounterpointRequest,
+    ClaimCounterpointResult,
     CoverageSummary,
     CounterNarrative,
     CounterNarrativeRequest,
@@ -33,6 +36,9 @@ from .graph import NarrativeGraph, GraphNode, GraphEdge
 
 __all__ = [
     "Document",
+    "ClaimCounterpointPair",
+    "ClaimCounterpointRequest",
+    "ClaimCounterpointResult",
     "CoverageSummary",
     "CounterNarrative",
     "CounterNarrativeRequest",

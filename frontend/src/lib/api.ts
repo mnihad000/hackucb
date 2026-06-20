@@ -114,6 +114,13 @@ export async function runAnalyst(investigationId: string) {
   });
 }
 
+export async function runClaimCounterpoints(investigationId: string) {
+  return request(`/api/investigations/${investigationId}/claim-counterpoints`, {
+    body: {},
+    method: "POST",
+  });
+}
+
 export async function runReport(investigationId: string) {
   return request(`/api/investigations/${investigationId}/report`, {
     body: {},

@@ -3,6 +3,8 @@ from __future__ import annotations
 from models.document import Document
 from models.investigation import (
     AnalystResult,
+    ClaimCounterpointPair,
+    ClaimCounterpointResult,
     CandidateClaim,
     CounterNarrativeResult,
     FinalReportClaim,
@@ -31,13 +33,20 @@ def build_final_report(
     timeline: TimelineResult,
     counter_narratives: CounterNarrativeResult,
     analyst: AnalystResult,
+    claim_counterpoints: ClaimCounterpointResult | None = None,
 ) -> FinalReportResult:
     docs_by_id = {doc.id: doc for doc in documents}
+    counterpoint_pairs = {
+        pair.claim_id: pair for pair in (claim_counterpoints.pairs if claim_counterpoints else [])
+    }
     key_claims = _select_key_claims(analyst.candidate_claims)
-    report_claims = [_build_report_claim(claim, docs_by_id) for claim in key_claims]
+    report_claims = [
+        _build_report_claim(claim, docs_by_id, counterpoint_pairs.get(claim.id))
+        for claim in key_claims
+    ]
     evidence_packet = _build_evidence_packet(report_claims)
     title = _report_title(plan)
-    summary = _report_summary(analyst, timeline, counter_narratives, report_claims)
+    summary = _report_summary(analyst, timeline, counter_narratives, report_claims, claim_counterpoints)
     sections = FinalReportSections(
         headline=title,
         executive_summary=analyst.draft_report_sections.executive_summary,
@@ -103,6 +112,7 @@ def _select_key_claims(claims: list[CandidateClaim]) -> list[CandidateClaim]:
 def _build_report_claim(
     claim: CandidateClaim,
     docs_by_id: dict[str, Document],
+    counterpoint_pair: ClaimCounterpointPair | None = None,
 ) -> FinalReportClaim:
     citations: list[ReportCitation] = []
     for doc_id in claim.supporting_document_ids[:3]:
@@ -129,6 +139,13 @@ def _build_report_claim(
         confidence_score=claim.confidence_score,
         caveats=claim.caveats,
         citations=citations,
+        counterpoint_summary=(
+            counterpoint_pair.relationship_summary
+            if counterpoint_pair is not None
+            else "No strong counterpoint found in retrieved evidence."
+        ),
+        counterpoint_type=counterpoint_pair.counter_type if counterpoint_pair is not None else None,
+        counter_citations=counterpoint_pair.counter_receipts if counterpoint_pair is not None else [],
     )
 
 
@@ -136,7 +153,7 @@ def _build_evidence_packet(report_claims: list[FinalReportClaim]) -> list[Report
     packet: list[ReportCitation] = []
     seen: set[str] = set()
     for claim in report_claims:
-        for citation in claim.citations:
+        for citation in [*claim.citations, *claim.counter_citations]:
             if citation.document_id in seen:
                 continue
             seen.add(citation.document_id)
@@ -157,11 +174,16 @@ def _report_summary(
     timeline: TimelineResult,
     counter_narratives: CounterNarrativeResult,
     report_claims: list[FinalReportClaim],
+    claim_counterpoints: ClaimCounterpointResult | None,
 ) -> str:
     parts = [analyst.draft_report_sections.executive_summary]
     if report_claims:
         parts.append(
             f"The final report surfaces {len(report_claims)} claim(s) with inline document support."
+        )
+    if claim_counterpoints is not None and claim_counterpoints.pairs:
+        parts.append(
+            f"{len(claim_counterpoints.pairs)} claim-level counterpoint pair(s) were linked to the report."
         )
     parts.append(
         f"The timeline contains {len(timeline.timeline_events)} dated event(s) used for chronology."

@@ -108,6 +108,7 @@ export type InvestigationNodeSource = {
   publishedAt?: string;
   snippet?: string;
   stance?: "supporting" | "opposing" | "context" | "unknown";
+  counterType?: "opposing" | "corrective" | "reframing";
 };
 
 export type InvestigationNode = {
@@ -190,6 +191,7 @@ export type InvestigationStage =
   | "timeline"
   | "counter_narrative"
   | "analyst"
+  | "claim_counterpoint"
   | "report";
 
 export type InvestigationPipelineStatus =
@@ -199,6 +201,7 @@ export type InvestigationPipelineStatus =
   | "timeline_completed"
   | "counter_narrative_completed"
   | "analyst_completed"
+  | "claim_counterpoint_completed"
   | "report_completed";
 
 export type LiveInvestigationPlan = {
@@ -396,6 +399,31 @@ export type LiveReportCitation = {
   relevance_note: string;
 };
 
+export type LiveClaimCounterpointPair = {
+  claim_id: string;
+  main_claim_text: string;
+  counter_claim_text: string;
+  counter_type: "opposing" | "corrective" | "reframing";
+  relationship_summary: string;
+  supporting_document_ids: string[];
+  counter_document_ids: string[];
+  main_receipts: LiveReportCitation[];
+  counter_receipts: LiveReportCitation[];
+  confidence_score: number;
+  caveats: string[];
+};
+
+export type LiveClaimCounterpointResult = {
+  investigation_id: string;
+  plan_snapshot: LiveInvestigationPlan;
+  pairs: LiveClaimCounterpointPair[];
+  unmatched_claim_ids: string[];
+  limitations: string[];
+  confidence_score: number;
+  confidence_label: InvestigationConfidence;
+  cached: boolean;
+};
+
 export type LiveFinalReportClaim = {
   claim_id: string;
   claim_text: string;
@@ -403,6 +431,9 @@ export type LiveFinalReportClaim = {
   confidence_score: number;
   caveats: string[];
   citations: LiveReportCitation[];
+  counterpoint_summary: string | null;
+  counterpoint_type: "opposing" | "corrective" | "reframing" | null;
+  counter_citations: LiveReportCitation[];
 };
 
 export type LiveFinalReportResult = {
@@ -443,5 +474,6 @@ export type LiveInvestigationWorkspace = {
   timeline: LiveTimelineResult | null;
   counter_narratives: LiveCounterNarrativeResult | null;
   analyst: LiveAnalystResult | null;
+  claim_counterpoints: LiveClaimCounterpointResult | null;
   report: LiveFinalReportResult | null;
 };

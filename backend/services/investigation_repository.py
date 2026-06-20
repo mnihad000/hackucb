@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from models.document import Document
 from models.investigation import (
     AnalystResult,
+    ClaimCounterpointResult,
     CounterNarrativeResult,
     FinalReportResult,
     InvestigationPlan,
@@ -100,6 +101,7 @@ class InvestigationRepository:
             timeline=self.get_timeline_result(investigation_id),
             counter_narratives=self.get_counter_narrative_result(investigation_id),
             analyst=self.get_analyst_result(investigation_id),
+            claim_counterpoints=self.get_claim_counterpoint_result(investigation_id),
             report=self.get_final_report_result(investigation_id),
         )
 
@@ -371,6 +373,38 @@ class InvestigationRepository:
                 (result.investigation_id, result.model_dump_json(), now, now),
             )
 
+    def save_claim_counterpoint_result(self, result: ClaimCounterpointResult) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE investigations
+                SET status = ?, current_stage = ?, updated_at = ?
+                WHERE investigation_id = ?
+                """,
+                ("claim_counterpoint_completed", "claim_counterpoint", now, result.investigation_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO claim_counterpoint_results (investigation_id, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(investigation_id) DO UPDATE SET
+                    result_json=excluded.result_json,
+                    updated_at=excluded.updated_at
+                """,
+                (result.investigation_id, result.model_dump_json(), now, now),
+            )
+
+    def get_claim_counterpoint_result(self, investigation_id: str) -> ClaimCounterpointResult | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT result_json FROM claim_counterpoint_results WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return ClaimCounterpointResult.model_validate_json(row["result_json"])
+
     def get_final_report_result(self, investigation_id: str) -> FinalReportResult | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -470,6 +504,13 @@ class InvestigationRepository:
                 );
 
                 CREATE TABLE IF NOT EXISTS analyst_results (
+                    investigation_id TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS claim_counterpoint_results (
                     investigation_id TEXT PRIMARY KEY,
                     result_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,

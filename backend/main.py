@@ -59,6 +59,7 @@ def root() -> dict:
             "POST   /api/investigations/{id}/timeline  (build deterministic timeline artifact)",
             "POST   /api/investigations/{id}/counter-narratives  (build counter-frame artifact)",
             "POST   /api/investigations/{id}/analyst  (build synthesis artifact)",
+            "POST   /api/investigations/{id}/claim-counterpoints  (build claim-level counterpoint artifact)",
             "POST   /api/investigations/{id}/report  (assemble final investigation report)",
             "GET    /api/graph/{narrative_id}",
             "GET    /api/receipts/{narrative_id}",

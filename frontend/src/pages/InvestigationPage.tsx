@@ -7,6 +7,7 @@ import {
   ApiError,
   getInvestigationWorkspace,
   runAnalyst,
+  runClaimCounterpoints,
   runCounterNarratives,
   runReport,
   runRetrieval,
@@ -116,6 +117,18 @@ export default function InvestigationPage() {
         if (!nextWorkspace.analyst) {
           setIsRunningPipeline(true);
           await runAnalyst(id);
+          nextWorkspace = await getInvestigationWorkspace(id);
+          if (cancelled) {
+            return;
+          }
+          startTransition(() => {
+            setWorkspace(nextWorkspace);
+          });
+        }
+
+        if (!nextWorkspace.claim_counterpoints) {
+          setIsRunningPipeline(true);
+          await runClaimCounterpoints(id);
           nextWorkspace = await getInvestigationWorkspace(id);
           if (cancelled) {
             return;
@@ -408,6 +421,11 @@ function ClaimsCard({
               <span className="data-pill">{formatClaimConfidence(claim)}</span>
             </div>
             <p className="mt-4 text-base leading-7 text-[var(--ink)]">{claim.claim_text}</p>
+            {claim.counterpoint_summary ? (
+              <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+                Counterpoint: {claim.counterpoint_summary}
+              </p>
+            ) : null}
             {claim.citations[0] ? (
               <a
                 className="mt-4 inline-flex text-sm font-semibold text-[var(--accent)] transition hover:text-[#627997]"

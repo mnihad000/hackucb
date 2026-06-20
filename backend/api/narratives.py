@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from uuid import uuid4
 
+from agents.claim_counterpoint_agent import build_claim_counterpoints
 from agents.planner_agent import plan_investigation
 from agents.retriever_agent import RetrieverAgent
 from config import get_settings
@@ -9,6 +10,8 @@ from models.graph import NarrativeGraph
 from models.investigation import (
     AnalystRequest,
     AnalystResult,
+    ClaimCounterpointRequest,
+    ClaimCounterpointResult,
     CounterNarrativeRequest,
     CounterNarrativeResult,
     FinalReportRequest,
@@ -57,6 +60,56 @@ _investigation_repo = InvestigationRepository(get_settings().INVESTIGATION_DB_PA
 
 def _build_retriever_agent() -> RetrieverAgent:
     return RetrieverAgent(repository=_investigation_repo)
+
+
+def _ensure_counter_narrative_result(
+    investigation_id: str,
+    plan,
+    retrieval,
+    documents,
+) -> CounterNarrativeResult:
+    counter_result = _investigation_repo.get_counter_narrative_result(investigation_id)
+    if counter_result is None:
+        counter_result = build_counter_narratives_artifact(investigation_id, plan, retrieval, documents)
+        _investigation_repo.save_counter_narrative_result(counter_result)
+    return counter_result
+
+
+def _ensure_timeline_result(
+    investigation_id: str,
+    plan,
+    retrieval,
+    documents,
+) -> TimelineResult:
+    timeline_result = _investigation_repo.get_timeline_result(investigation_id)
+    if timeline_result is None:
+        timeline_result = build_timeline_artifact(investigation_id, plan, retrieval, documents)
+        _investigation_repo.save_timeline_result(timeline_result)
+    return timeline_result
+
+
+def _ensure_analyst_result(
+    investigation_id: str,
+    plan,
+    retrieval,
+    documents,
+) -> AnalystResult:
+    analyst_result = _investigation_repo.get_analyst_result(investigation_id)
+    if analyst_result is not None:
+        return analyst_result
+
+    timeline_result = _ensure_timeline_result(investigation_id, plan, retrieval, documents)
+    counter_result = _ensure_counter_narrative_result(investigation_id, plan, retrieval, documents)
+    analyst_result = build_analyst_result_artifact(
+        investigation_id,
+        plan,
+        retrieval,
+        documents,
+        timeline_result,
+        counter_result,
+    )
+    _investigation_repo.save_analyst_result(analyst_result)
+    return analyst_result
 
 
 # ---------------------------------------------------------------------------
@@ -314,8 +367,7 @@ def analyst(
 
     counter_result = _investigation_repo.get_counter_narrative_result(investigation_id)
     if counter_result is None:
-        counter_result = build_counter_narratives_artifact(investigation_id, plan, retrieval, documents)
-        _investigation_repo.save_counter_narrative_result(counter_result)
+        counter_result = _ensure_counter_narrative_result(investigation_id, plan, retrieval, documents)
 
     try:
         result = build_analyst_result_artifact(
@@ -332,6 +384,56 @@ def analyst(
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Analyst build failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# POST /api/investigations/{id}/claim-counterpoints - build claim-level counterpoint artifact
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/investigations/{investigation_id}/claim-counterpoints",
+    response_model=ClaimCounterpointResult,
+)
+def claim_counterpoints(
+    investigation_id: str,
+    request: ClaimCounterpointRequest,
+) -> ClaimCounterpointResult:
+    if not _investigation_repo.investigation_exists(investigation_id):
+        raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
+
+    plan = _investigation_repo.get_plan(investigation_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Investigation plan for '{investigation_id}' not found.")
+
+    retrieval = _investigation_repo.get_retrieval_result(investigation_id)
+    if retrieval is None:
+        raise HTTPException(status_code=404, detail=f"Retrieval result for '{investigation_id}' not found.")
+
+    documents = _investigation_repo.get_retrieved_documents(investigation_id)
+
+    if not request.force_refresh:
+        cached = _investigation_repo.get_claim_counterpoint_result(investigation_id)
+        if cached is not None:
+            return cached.model_copy(update={"cached": True})
+
+    counter_result = _ensure_counter_narrative_result(investigation_id, plan, retrieval, documents)
+    analyst_result = _ensure_analyst_result(investigation_id, plan, retrieval, documents)
+
+    try:
+        result = build_claim_counterpoints(
+            investigation_id,
+            plan,
+            retrieval,
+            documents,
+            counter_result,
+            analyst_result,
+        )
+        _investigation_repo.save_claim_counterpoint_result(result)
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Claim counterpoint build failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -369,27 +471,20 @@ def final_report(
         source_diversity_result = build_source_diversity_artifact(investigation_id, plan, retrieval, documents)
         _investigation_repo.save_source_diversity_result(source_diversity_result)
 
-    timeline_result = _investigation_repo.get_timeline_result(investigation_id)
-    if timeline_result is None:
-        timeline_result = build_timeline_artifact(investigation_id, plan, retrieval, documents)
-        _investigation_repo.save_timeline_result(timeline_result)
-
-    counter_result = _investigation_repo.get_counter_narrative_result(investigation_id)
-    if counter_result is None:
-        counter_result = build_counter_narratives_artifact(investigation_id, plan, retrieval, documents)
-        _investigation_repo.save_counter_narrative_result(counter_result)
-
-    analyst_result = _investigation_repo.get_analyst_result(investigation_id)
-    if analyst_result is None:
-        analyst_result = build_analyst_result_artifact(
+    timeline_result = _ensure_timeline_result(investigation_id, plan, retrieval, documents)
+    counter_result = _ensure_counter_narrative_result(investigation_id, plan, retrieval, documents)
+    analyst_result = _ensure_analyst_result(investigation_id, plan, retrieval, documents)
+    claim_counterpoint_result = _investigation_repo.get_claim_counterpoint_result(investigation_id)
+    if claim_counterpoint_result is None:
+        claim_counterpoint_result = build_claim_counterpoints(
             investigation_id,
             plan,
             retrieval,
             documents,
-            timeline_result,
             counter_result,
+            analyst_result,
         )
-        _investigation_repo.save_analyst_result(analyst_result)
+        _investigation_repo.save_claim_counterpoint_result(claim_counterpoint_result)
 
     try:
         result = build_final_report_artifact(
@@ -400,6 +495,7 @@ def final_report(
             timeline_result,
             counter_result,
             analyst_result,
+            claim_counterpoint_result,
         )
         _investigation_repo.save_final_report_result(result)
         return result

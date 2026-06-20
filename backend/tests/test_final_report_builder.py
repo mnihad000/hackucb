@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+from agents.claim_counterpoint_agent import build_claim_counterpoints
 from models.document import Document
 from models.investigation import InvestigationPlan, InvestigationPlanTimeWindow, RetrievalResult
 from services.analyst_builder import build_analyst_result
@@ -144,14 +145,32 @@ def test_final_report_builder_produces_claims_and_evidence_packet():
     timeline = build_timeline("inv_report", plan, retrieval, docs)
     counter = build_counter_narratives("inv_report", plan, retrieval, docs)
     analyst = build_analyst_result("inv_report", plan, retrieval, docs, timeline, counter)
+    claim_counterpoints = build_claim_counterpoints(
+        "inv_report",
+        plan,
+        retrieval,
+        docs,
+        counter,
+        analyst,
+    )
 
-    result = build_final_report("inv_report", plan, retrieval, docs, timeline, counter, analyst)
+    result = build_final_report(
+        "inv_report",
+        plan,
+        retrieval,
+        docs,
+        timeline,
+        counter,
+        analyst,
+        claim_counterpoints,
+    )
 
     assert result.report_title == "Investigation Report: hidden energy tax"
     assert result.key_claims
     assert result.evidence_packet
     assert all(claim.claim_type != "recommendation" for claim in result.key_claims)
     assert any(claim.citations for claim in result.key_claims)
+    assert all(claim.counterpoint_summary for claim in result.key_claims)
     assert result.sections.executive_summary
     assert result.confidence_label in {"medium", "high"}
 
@@ -164,13 +183,31 @@ def test_final_report_result_persists_and_reloads(tmp_path):
     timeline = build_timeline("inv_report", plan, retrieval, docs)
     counter = build_counter_narratives("inv_report", plan, retrieval, docs)
     analyst = build_analyst_result("inv_report", plan, retrieval, docs, timeline, counter)
-    result = build_final_report("inv_report", plan, retrieval, docs, timeline, counter, analyst)
+    claim_counterpoints = build_claim_counterpoints(
+        "inv_report",
+        plan,
+        retrieval,
+        docs,
+        counter,
+        analyst,
+    )
+    result = build_final_report(
+        "inv_report",
+        plan,
+        retrieval,
+        docs,
+        timeline,
+        counter,
+        analyst,
+        claim_counterpoints,
+    )
 
     repo.save_plan("inv_report", plan.query_text, plan)
     repo.save_retrieval_result(retrieval, docs)
     repo.save_timeline_result(timeline)
     repo.save_counter_narrative_result(counter)
     repo.save_analyst_result(analyst)
+    repo.save_claim_counterpoint_result(claim_counterpoints)
     repo.save_final_report_result(result)
 
     loaded = repo.get_final_report_result("inv_report")

@@ -1,4 +1,8 @@
-import type { LiveInvestigationWorkspace } from "../types/rhetoriq";
+import type {
+  LiveInvestigationWorkspace,
+  LiveTrendingFeed,
+  LiveTrendingInvestigationResponse,
+} from "../types/rhetoriq";
 
 const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
@@ -54,6 +58,19 @@ export async function createInvestigation(queryText: string) {
     body: { query_text: queryText },
     method: "POST",
   });
+}
+
+export async function getTrendingFeed(limit = 6) {
+  return request<LiveTrendingFeed>(`/api/trending?limit=${limit}`);
+}
+
+export async function startTrendingInvestigation(topicId: string) {
+  return request<LiveTrendingInvestigationResponse>(
+    `/api/trending/${topicId}/investigate`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export async function getInvestigationWorkspace(investigationId: string) {

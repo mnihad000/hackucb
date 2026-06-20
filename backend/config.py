@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     RETRIEVER_MAX_ROUNDS: int = 3
     RETRIEVER_MAX_RESULTS_PER_QUERY: int = 5
     FETCH_TIMEOUT_SECONDS: int = 20
+    TRENDING_REFRESH_HOURS: int = 6
+    TRENDING_RESEED_HOURS: int = 24
+    TRENDING_MIN_DOCS: int = 4
+    TRENDING_MIN_PUBLISHERS: int = 3
+    TRENDING_MIN_SOURCE_TYPES: int = 2
+    TRENDING_MAX_TOPICS: int = 6
 
     # GDELT — no key required, free public API
     GDELT_MAX_RECORDS: int = 50

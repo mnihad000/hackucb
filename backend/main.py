@@ -4,6 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.health import router as health_router
 from api.ingest import router as ingest_router
 from api.narratives import router as narratives_router
+from api.trending import router as trending_router
+from api.trending import _service as trending_service
 from config import get_settings
 
 settings = get_settings()
@@ -25,6 +27,14 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(ingest_router)
 app.include_router(narratives_router)
+app.include_router(trending_router)
+
+
+@app.on_event("startup")
+def warm_trending_feed() -> None:
+    if settings.DEMO_MODE:
+        return
+    trending_service.ensure_warm_async()
 
 
 @app.get("/")
@@ -52,5 +62,9 @@ def root() -> dict:
             "GET    /api/graph/{narrative_id}",
             "GET    /api/receipts/{narrative_id}",
             "GET    /api/mutations/{narrative_id}",
+            "GET    /api/trending",
+            "GET    /api/trending/status",
+            "POST   /api/trending/refresh",
+            "POST   /api/trending/{topic_id}/investigate",
         ],
     }

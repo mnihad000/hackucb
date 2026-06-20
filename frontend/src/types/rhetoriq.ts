@@ -25,6 +25,51 @@ export type RadarTopic = {
   confidence: "Low" | "Medium" | "High";
 };
 
+export type TrendingFeedState = "warming" | "ready" | "stale" | "error";
+
+export type LiveTrendingTimelinePoint = {
+  timestamp: string;
+  count: number;
+};
+
+export type LiveTrendingTopic = {
+  id: string;
+  title: string;
+  canonical_phrase: string;
+  summary: string;
+  related_phrases: string[];
+  status: string;
+  confidence_label: "Low" | "Medium" | "High";
+  confidence_score: number;
+  source_count: number;
+  publisher_count: number;
+  first_observed_at: string;
+  latest_observed_at: string;
+  source_diversity_snapshot: Record<string, number>;
+  timeline: LiveTrendingTimelinePoint[];
+  velocity_score: number;
+  persistence_runs: number;
+  provider_mix: Record<string, number>;
+  supporting_document_ids: string[];
+};
+
+export type LiveTrendingFeed = {
+  state: TrendingFeedState;
+  generated_at?: string | null;
+  fresh_until?: string | null;
+  last_completed_run_at?: string | null;
+  last_reseed_at?: string | null;
+  warning?: string | null;
+  topics: LiveTrendingTopic[];
+};
+
+export type LiveTrendingInvestigationResponse = {
+  investigation_id: string;
+  reused_existing: boolean;
+  topic_id: string;
+  canonical_phrase: string;
+};
+
 export type RecentInvestigation = {
   id: string;
   title: string;

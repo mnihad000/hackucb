@@ -90,6 +90,7 @@ def test_root():
     assert any("/api/investigations/{id}/counter-narratives" in endpoint for endpoint in data["endpoints"])
     assert any("/api/investigations/{id}/analyst" in endpoint for endpoint in data["endpoints"])
     assert any("/api/investigations/{id}/report" in endpoint for endpoint in data["endpoints"])
+    assert any("/api/trending" in endpoint for endpoint in data["endpoints"])
 
 
 def test_list_narratives():

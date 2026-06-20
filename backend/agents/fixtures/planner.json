@@ -1,0 +1,49 @@
+{
+  "query_text": "Where did the 'hidden energy tax' narrative come from?",
+  "topic": "hidden energy tax",
+  "canonical_phrase": "hidden energy tax",
+  "intent": "origin",
+  "entities": [
+    "hidden",
+    "energy",
+    "tax"
+  ],
+  "search_queries": [
+    "\"hidden energy tax\"",
+    "Where did the 'hidden energy tax' narrative come from?",
+    "\"hidden energy tax\" hidden energy tax"
+  ],
+  "semantic_queries": [
+    "Investigate the narrative around hidden energy tax",
+    "Find evidence about origin and spread of hidden energy tax",
+    "Find counter-narratives and source diversity around hidden energy tax"
+  ],
+  "target_source_types": [
+    "forum",
+    "blog",
+    "local_news",
+    "national_news",
+    "commentary",
+    "speech_transcript"
+  ],
+  "requested_outputs": [
+    "timeline",
+    "counter_narratives",
+    "source_diversity"
+  ],
+  "time_window": {
+    "start": null,
+    "end": null,
+    "label": "all_time"
+  },
+  "retrieval_mode": "broad",
+  "risk_notes": [
+    "Use 'first observed in our dataset' instead of claiming true origin.",
+    "Do not infer coordination or intent from timing alone.",
+    "Return an evidence-seeking plan, not a user-facing answer."
+  ],
+  "uncertainty_requirements": [
+    "State clearly when earlier sources may exist outside the dataset.",
+    "Preserve uncertainty when the query is broad or underspecified."
+  ]
+}

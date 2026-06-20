@@ -18,5 +18,4 @@ backend/*.sqlite3
 
 # Temporary backend split for incremental commits:
 # Commit 1: keep core app files only
-backend/services/
-backend/tests/
+

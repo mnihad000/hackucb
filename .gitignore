@@ -1,5 +1,4 @@
 frontend/src/components
-frontend/src/app
 node_modules/
 .env
 .env.local

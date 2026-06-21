@@ -111,6 +111,29 @@ def _sync_agent_debate_to_band(result: AgentDebateResult) -> AgentDebateResult:
         )
 
 
+def _publish_band_stage_event(
+    investigation_id: str,
+    *,
+    stage: str,
+    role: str,
+    content: str,
+    metadata: dict | None = None,
+) -> None:
+    """Best-effort Band event publishing for live investigation stages."""
+    try:
+        result = get_band_room_sync().sync_stage_event(
+            investigation_id=investigation_id,
+            stage=stage,
+            role=role,
+            content=content,
+            metadata=metadata,
+        )
+        if result.status == "failed":
+            logger.warning("Band stage event failed for %s/%s: %s", investigation_id, stage, result.error)
+    except Exception as exc:
+        logger.warning("Band stage event error for %s/%s: %s", investigation_id, stage, exc)
+
+
 def _auto_verify_documents(documents, max_docs: int = 6) -> None:
     """Run Browserbase verification on retrieved docs not already in Redis cache.
 
@@ -395,6 +418,16 @@ def _ensure_counter_narrative_result(
     if counter_result is None:
         counter_result = build_counter_narratives_artifact(investigation_id, plan, retrieval, documents)
         _investigation_repo.save_counter_narrative_result(counter_result)
+        _publish_band_stage_event(
+            investigation_id,
+            stage="counter_narratives",
+            role="Counter-Narrative Agent",
+            content=(
+                f"Identified {len(counter_result.counter_narratives)} counter-frame candidate(s) "
+                f"for {plan.topic}."
+            ),
+            metadata={"confidence_label": counter_result.confidence_label},
+        )
     return counter_result
 
 
@@ -408,6 +441,16 @@ def _ensure_timeline_result(
     if timeline_result is None:
         timeline_result = build_timeline_artifact(investigation_id, plan, retrieval, documents)
         _investigation_repo.save_timeline_result(timeline_result)
+        _publish_band_stage_event(
+            investigation_id,
+            stage="timeline",
+            role="Timeline Agent",
+            content=(
+                f"Built a {len(timeline_result.timeline_events)} event timeline. "
+                f"First observed document: {timeline_result.first_observed_doc_id or 'unknown'}."
+            ),
+            metadata={"confidence_label": timeline_result.confidence_label},
+        )
     return timeline_result
 
 
@@ -432,6 +475,16 @@ def _ensure_analyst_result(
         counter_result,
     )
     _investigation_repo.save_analyst_result(analyst_result)
+    _publish_band_stage_event(
+        investigation_id,
+        stage="analyst",
+        role="Analyst Agent",
+        content=(
+            f"Drafted analyst synthesis with {len(analyst_result.candidate_claims)} candidate claim(s). "
+            f"Confidence: {analyst_result.confidence_label}."
+        ),
+        metadata={"confidence_label": analyst_result.confidence_label},
+    )
     return analyst_result
 
 
@@ -456,6 +509,16 @@ def _ensure_narrative_family_result(
         counter_result,
     )
     _investigation_repo.save_narrative_family_result(narrative_family_result)
+    _publish_band_stage_event(
+        investigation_id,
+        stage="narrative_family",
+        role="Narrative Family Agent",
+        content=(
+            f"Grouped narrative family '{narrative_family_result.family_title}' with "
+            f"{len(narrative_family_result.child_narratives)} branch(es)."
+        ),
+        metadata={"confidence_label": narrative_family_result.confidence_label},
+    )
     return narrative_family_result
 
 
@@ -480,6 +543,16 @@ def _ensure_claim_counterpoint_result(
         analyst_result,
     )
     _investigation_repo.save_claim_counterpoint_result(claim_counterpoint_result)
+    _publish_band_stage_event(
+        investigation_id,
+        stage="claim_counterpoints",
+        role="Claim Counterpoint Agent",
+        content=(
+            f"Matched {len(claim_counterpoint_result.pairs)} claim-level counterpoint pair(s); "
+            f"{len(claim_counterpoint_result.unmatched_claim_ids)} claim(s) remain unmatched."
+        ),
+        metadata={"confidence_label": claim_counterpoint_result.confidence_label},
+    )
     return claim_counterpoint_result
 
 
@@ -571,9 +644,29 @@ def _ensure_receipts_and_report(
             verification_map,
         )
         _investigation_repo.save_receipts_result(receipts_result)
+        _publish_band_stage_event(
+            investigation_id,
+            stage="receipts",
+            role="Receipts Agent",
+            content=(
+                f"Reviewed {len(receipts_result.claim_receipts)} report claim receipt set(s) "
+                f"and {len(receipts_result.counter_claim_receipts)} counter-claim receipt set(s)."
+            ),
+            metadata={"confidence_label": receipts_result.confidence_label},
+        )
 
     annotated_report = apply_receipts_annotations(base_report, receipts_result)
     _investigation_repo.save_final_report_result(annotated_report, update_stage=False)
+    _publish_band_stage_event(
+        investigation_id,
+        stage="report_draft",
+        role="Final Report Agent",
+        content=(
+            f"Prepared report draft '{annotated_report.report_title}' with "
+            f"{len(annotated_report.key_claims)} key claim(s)."
+        ),
+        metadata={"confidence_label": annotated_report.confidence_label},
+    )
     return annotated_report, receipts_result, claim_counterpoint_result
 
 
@@ -720,6 +813,16 @@ def investigate(request: PlannerRequest) -> PlannerResponse:
         )
 
     _investigation_repo.save_plan(investigation_id, request.query_text, plan)
+    _publish_band_stage_event(
+        investigation_id,
+        stage="planner",
+        role="Query Planner Agent",
+        content=(
+            f"Planned investigation for '{plan.topic}' with "
+            f"{len(plan.retrieval_lanes)} retrieval lane(s) and {len(plan.search_queries)} search query seed(s)."
+        ),
+        metadata={"confidence_label": "planning", "order": 1},
+    )
     try:
         get_redis_memory_service().store_agent_finding(
             f"{investigation_id}:planner:plan",
@@ -766,6 +869,17 @@ def retrieve(investigation_id: str, request: RetrieveRequest) -> RetrievalResult
         _store_retrieved_documents_in_memory(
             investigation_id,
             _investigation_repo.get_retrieved_documents(investigation_id),
+        )
+        _publish_band_stage_event(
+            investigation_id,
+            stage="retrieval",
+            role="Retriever Agent",
+            content=(
+                f"Retrieved {result.coverage_summary.total_documents} document(s) across "
+                f"{result.coverage_summary.unique_sources} source(s). "
+                f"Coverage confidence: {result.evidence_coverage_confidence}."
+            ),
+            metadata={"confidence_label": result.evidence_coverage_confidence, "order": 2},
         )
         _update_workspace_cache(investigation_id)
         return result
@@ -866,6 +980,16 @@ def source_diversity(
     try:
         result = build_source_diversity_artifact(investigation_id, plan, retrieval, documents)
         _investigation_repo.save_source_diversity_result(result)
+        _publish_band_stage_event(
+            investigation_id,
+            stage="source_diversity",
+            role="Source Diversity Agent",
+            content=(
+                f"Classified {result.classified_documents} document(s) across "
+                f"{len(result.source_type_distribution)} source type(s)."
+            ),
+            metadata={"confidence_label": result.confidence_label},
+        )
         return result
     except HTTPException:
         raise
@@ -900,6 +1024,16 @@ def timeline(investigation_id: str, request: TimelineRequest) -> TimelineResult:
     try:
         result = build_timeline_artifact(investigation_id, plan, retrieval, documents)
         _investigation_repo.save_timeline_result(result)
+        _publish_band_stage_event(
+            investigation_id,
+            stage="timeline",
+            role="Timeline Agent",
+            content=(
+                f"Built a {len(result.timeline_events)} event timeline. "
+                f"First observed document: {result.first_observed_doc_id or 'unknown'}."
+            ),
+            metadata={"confidence_label": result.confidence_label},
+        )
         _store_timeline_in_memory(result)
         _update_workspace_cache(investigation_id)
         return result
@@ -942,6 +1076,16 @@ def counter_narratives(
     try:
         result = build_counter_narratives_artifact(investigation_id, plan, retrieval, documents)
         _investigation_repo.save_counter_narrative_result(result)
+        _publish_band_stage_event(
+            investigation_id,
+            stage="counter_narratives",
+            role="Counter-Narrative Agent",
+            content=(
+                f"Identified {len(result.counter_narratives)} counter-frame candidate(s) "
+                f"for {plan.topic}."
+            ),
+            metadata={"confidence_label": result.confidence_label},
+        )
         _update_workspace_cache(investigation_id)
         return result
     except HTTPException:
@@ -992,6 +1136,16 @@ def narrative_family(
             counter_result,
         )
         _investigation_repo.save_narrative_family_result(result)
+        _publish_band_stage_event(
+            investigation_id,
+            stage="narrative_family",
+            role="Narrative Family Agent",
+            content=(
+                f"Grouped narrative family '{result.family_title}' with "
+                f"{len(result.child_narratives)} branch(es)."
+            ),
+            metadata={"confidence_label": result.confidence_label},
+        )
         _store_narrative_family_in_memory(result)
         return result
     except HTTPException:
@@ -1034,11 +1188,31 @@ def analyst(
     if source_diversity_result is None:
         source_diversity_result = build_source_diversity_artifact(investigation_id, plan, retrieval, documents)
         _investigation_repo.save_source_diversity_result(source_diversity_result)
+        _publish_band_stage_event(
+            investigation_id,
+            stage="source_diversity",
+            role="Source Diversity Agent",
+            content=(
+                f"Classified {source_diversity_result.classified_documents} document(s) across "
+                f"{len(source_diversity_result.source_type_distribution)} source type(s)."
+            ),
+            metadata={"confidence_label": source_diversity_result.confidence_label},
+        )
 
     timeline_result = _investigation_repo.get_timeline_result(investigation_id)
     if timeline_result is None:
         timeline_result = build_timeline_artifact(investigation_id, plan, retrieval, documents)
         _investigation_repo.save_timeline_result(timeline_result)
+        _publish_band_stage_event(
+            investigation_id,
+            stage="timeline",
+            role="Timeline Agent",
+            content=(
+                f"Built a {len(timeline_result.timeline_events)} event timeline. "
+                f"First observed document: {timeline_result.first_observed_doc_id or 'unknown'}."
+            ),
+            metadata={"confidence_label": timeline_result.confidence_label},
+        )
 
     counter_result = _investigation_repo.get_counter_narrative_result(investigation_id)
     if counter_result is None:
@@ -1054,6 +1228,16 @@ def analyst(
             counter_result,
         )
         _investigation_repo.save_analyst_result(result)
+        _publish_band_stage_event(
+            investigation_id,
+            stage="analyst",
+            role="Analyst Agent",
+            content=(
+                f"Drafted analyst synthesis with {len(result.candidate_claims)} candidate claim(s). "
+                f"Confidence: {result.confidence_label}."
+            ),
+            metadata={"confidence_label": result.confidence_label},
+        )
         _store_timeline_in_memory(timeline_result)
         _store_analyst_in_memory(result)
         _update_workspace_cache(investigation_id)
@@ -1113,6 +1297,16 @@ def claim_counterpoints(
                 analyst_result,
             )
             _investigation_repo.save_claim_counterpoint_result(result)
+            _publish_band_stage_event(
+                investigation_id,
+                stage="claim_counterpoints",
+                role="Claim Counterpoint Agent",
+                content=(
+                    f"Matched {len(result.pairs)} claim-level counterpoint pair(s); "
+                    f"{len(result.unmatched_claim_ids)} claim(s) remain unmatched."
+                ),
+                metadata={"confidence_label": result.confidence_label},
+            )
         _store_claim_counterpoints_in_memory(result)
         return result
     except HTTPException:
@@ -1299,6 +1493,16 @@ def final_report(
         _store_narrative_family_in_memory(family_result)
         _store_report_in_memory(result)
         _update_workspace_cache(investigation_id)
+        _publish_band_stage_event(
+            investigation_id,
+            stage="final_report",
+            role="Final Report Agent",
+            content=(
+                f"Finalized report '{result.report_title}' with {len(result.key_claims)} key claim(s), "
+                f"{len(result.evidence_packet)} evidence packet item(s), and {result.confidence_label} confidence."
+            ),
+            metadata={"confidence_label": result.confidence_label},
+        )
 
         # Grounding eval — emit an Arize span scoring how well claims are receipted
         try:

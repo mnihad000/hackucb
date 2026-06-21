@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Callable
 
 from config import get_settings
@@ -36,6 +37,7 @@ class BandRoomSync:
     ) -> None:
         self._settings = get_settings()
         self._link_factory = link_factory
+        self._chat_ids_by_investigation: dict[str, str] = {}
 
     def configured(self) -> bool:
         return bool(self._settings.BAND_API_KEY and self._settings.BAND_AGENT_ID)
@@ -70,7 +72,7 @@ class BandRoomSync:
             link = self._build_link()
             rest = link.rest
             request_options = self._request_options()
-            chat_id = self._settings.BAND_ROOM_ID or await self._create_chat(
+            chat_id = await self._get_or_create_chat(
                 rest,
                 debate.investigation_id,
                 request_options,
@@ -100,9 +102,91 @@ class BandRoomSync:
             logger.warning("Band debate sync failed: %s", exc)
             return BandSyncResult(chat_id=None, status="failed", error=str(exc))
 
+    def sync_stage_event(
+        self,
+        *,
+        investigation_id: str,
+        stage: str,
+        role: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> BandSyncResult:
+        """Publish one pipeline-stage event into the investigation's Band room."""
+        if not self.configured():
+            return BandSyncResult(
+                chat_id=None,
+                status="not_configured",
+                error="BAND_API_KEY and BAND_AGENT_ID are required.",
+            )
+
+        try:
+            asyncio.get_running_loop()
+            return BandSyncResult(
+                chat_id=None,
+                status="failed",
+                error="Band sync was called from an active event loop; use sync_stage_event_async instead.",
+            )
+        except RuntimeError:
+            return asyncio.run(
+                self.sync_stage_event_async(
+                    investigation_id=investigation_id,
+                    stage=stage,
+                    role=role,
+                    content=content,
+                    metadata=metadata,
+                )
+            )
+
+    async def sync_stage_event_async(
+        self,
+        *,
+        investigation_id: str,
+        stage: str,
+        role: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> BandSyncResult:
+        if not self.configured():
+            return BandSyncResult(
+                chat_id=None,
+                status="not_configured",
+                error="BAND_API_KEY and BAND_AGENT_ID are required.",
+            )
+        if not content.strip():
+            return BandSyncResult(chat_id=None, status="skipped", error="Empty Band stage event content.")
+
+        try:
+            link = self._build_link()
+            rest = link.rest
+            request_options = self._request_options()
+            chat_id = await self._get_or_create_chat(rest, investigation_id, request_options)
+            event_debate = SimpleNamespace(
+                investigation_id=investigation_id,
+                confidence_label=str((metadata or {}).get("confidence_label", "")),
+            )
+            await self._create_event(
+                rest,
+                chat_id,
+                role,
+                content,
+                event_debate,
+                request_options,
+                order=int((metadata or {}).get("order", 0) or 0),
+                extra_metadata={
+                    **(metadata or {}),
+                    "stage": stage,
+                    "event_type": "stage_update",
+                },
+            )
+            logger.info("Synced RhetoriQ %s stage event to Band chat %s", stage, chat_id)
+            return BandSyncResult(chat_id=chat_id, status="synced", message_count=1)
+        except Exception as exc:
+            logger.warning("Band stage sync failed: %s", exc)
+            return BandSyncResult(chat_id=None, status="failed", error=str(exc))
+
     def apply_sync_result(
         self,
-        debate: AgentDebateResult,
+        debate: Any,
         result: BandSyncResult,
     ) -> AgentDebateResult:
         return debate.model_copy(
@@ -146,20 +230,33 @@ class BandRoomSync:
         investigation_id: str,
         request_options: dict[str, Any] | None,
     ) -> str:
-        from band.client.rest import ChatRoomRequest
-
         import re
         _UUID_RE = re.compile(
             r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I
         )
         task_id = investigation_id if _UUID_RE.match(investigation_id) else None
         response = await rest.agent_api_chats.create_agent_chat(
-            chat=ChatRoomRequest(task_id=task_id),
+            chat=_chat_room_request(task_id=task_id),
             request_options=request_options,
         )
         chat_id = _response_id(response)
         if not chat_id:
             raise RuntimeError("Band chat creation returned no chat id.")
+        return chat_id
+
+    async def _get_or_create_chat(
+        self,
+        rest: Any,
+        investigation_id: str,
+        request_options: dict[str, Any] | None,
+    ) -> str:
+        if self._settings.BAND_ROOM_ID:
+            return self._settings.BAND_ROOM_ID
+        cached = self._chat_ids_by_investigation.get(investigation_id)
+        if cached:
+            return cached
+        chat_id = await self._create_chat(rest, investigation_id, request_options)
+        self._chat_ids_by_investigation[investigation_id] = chat_id
         return chat_id
 
     async def _create_event(
@@ -172,21 +269,22 @@ class BandRoomSync:
         request_options: dict[str, Any] | None,
         *,
         order: int,
+        extra_metadata: dict[str, Any] | None = None,
     ) -> None:
-        from band.client.rest import ChatEventRequest
-
+        metadata = {
+            "source": "rhetoriq",
+            "investigation_id": debate.investigation_id,
+            "agent_role": role,
+            "order": order,
+            "confidence_label": debate.confidence_label,
+        }
+        metadata.update(extra_metadata or {})
         await rest.agent_api_events.create_agent_chat_event(
             chat_id,
-            event=ChatEventRequest(
+            event=_chat_event_request(
                 content=f"{role}: {_clip(content)}",
                 message_type="thought",
-                metadata={
-                    "source": "rhetoriq",
-                    "investigation_id": debate.investigation_id,
-                    "agent_role": role,
-                    "order": order,
-                    "confidence_label": debate.confidence_label,
-                },
+                metadata=metadata,
             ),
             request_options=request_options,
         )
@@ -224,6 +322,25 @@ def _clip(value: str, limit: int = 1800) -> str:
     if len(normalized) <= limit:
         return normalized
     return normalized[: limit - 1].rstrip() + "…"
+
+
+
+def _chat_room_request(*, task_id: str | None) -> Any:
+    try:
+        from band.client.rest import ChatRoomRequest
+
+        return ChatRoomRequest(task_id=task_id)
+    except Exception:
+        return SimpleNamespace(task_id=task_id)
+
+
+def _chat_event_request(*, content: str, message_type: str, metadata: dict[str, Any]) -> Any:
+    try:
+        from band.client.rest import ChatEventRequest
+
+        return ChatEventRequest(content=content, message_type=message_type, metadata=metadata)
+    except Exception:
+        return SimpleNamespace(content=content, message_type=message_type, metadata=metadata)
 
 
 _sync: BandRoomSync | None = None

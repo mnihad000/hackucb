@@ -12,6 +12,7 @@ from models.investigation import (
     FinalReportResult,
     FinalReportSections,
     InvestigationPlan,
+    NarrativeFamilyResult,
     ReceiptsResult,
     ReportCitation,
     RetrievalResult,
@@ -34,6 +35,7 @@ def build_final_report(
     documents: list[Document],
     timeline: TimelineResult,
     counter_narratives: CounterNarrativeResult,
+    narrative_family: NarrativeFamilyResult | None,
     analyst: AnalystResult,
     claim_counterpoints: ClaimCounterpointResult | None = None,
 ) -> FinalReportResult:
@@ -48,7 +50,14 @@ def build_final_report(
     ]
     evidence_packet = _build_evidence_packet(report_claims)
     title = _report_title(plan)
-    summary = _report_summary(analyst, timeline, counter_narratives, report_claims, claim_counterpoints)
+    summary = _report_summary(
+        analyst,
+        timeline,
+        counter_narratives,
+        narrative_family,
+        report_claims,
+        claim_counterpoints,
+    )
     sections = FinalReportSections(
         headline=title,
         executive_summary=analyst.draft_report_sections.executive_summary,
@@ -208,6 +217,7 @@ def _report_summary(
     analyst: AnalystResult,
     timeline: TimelineResult,
     counter_narratives: CounterNarrativeResult,
+    narrative_family: NarrativeFamilyResult | None,
     report_claims: list[FinalReportClaim],
     claim_counterpoints: ClaimCounterpointResult | None,
 ) -> str:
@@ -229,6 +239,8 @@ def _report_summary(
         )
     else:
         parts.append("No clear counter-frame was identified in the retrieved corpus.")
+    if narrative_family is not None:
+        parts.append(narrative_family.mutation_summary or narrative_family.summary)
     return " ".join(parts)
 
 

@@ -16,12 +16,51 @@ import {
 } from "framer-motion";
 import Header from "../components/layout/Header";
 import { ApiError, createInvestigation } from "../lib/api";
-import { createInvestigationHref, radarTopics } from "../lib/demoData";
+import { createInvestigationHref } from "../lib/investigationHref";
 import type { RadarTopic } from "../types/rhetoriq";
 
 const EASE_OUT = [0.16, 1, 0.3, 1] as const;
 
 type Point = { x: number; y: number };
+
+const radarTopics: RadarTopic[] = [
+  {
+    id: "hidden-energy-tax",
+    title: "Hidden Energy Tax",
+    summary:
+      "A cost-focused frame begins in local coverage before spreading into broader policy commentary.",
+    spike: "7.4x",
+    sourceCount: 12,
+    firstObserved: "Jun 20, 9:14 AM",
+    status: "Amplifying",
+    sourceMix: "Local, national, advocacy",
+    confidence: "High",
+  },
+  {
+    id: "tiktok-ban",
+    title: "TikTok Ban",
+    summary:
+      "Security, speech, and competition frames compete as the story moves through officials and platforms.",
+    spike: "5.8x",
+    sourceCount: 9,
+    firstObserved: "Jun 20, 10:42 AM",
+    status: "Mainstreaming",
+    sourceMix: "Official, tech, national",
+    confidence: "Medium",
+  },
+  {
+    id: "education-policy",
+    title: "Education Policy",
+    summary:
+      "Counter-frames form around school funding, curriculum control, and local implementation tradeoffs.",
+    spike: "4.2x",
+    sourceCount: 7,
+    firstObserved: "Jun 20, 1:06 PM",
+    status: "Emerging",
+    sourceMix: "Local, forum, advocacy",
+    confidence: "Medium",
+  },
+];
 
 export default function LandingPage() {
   const streamRef = useRef<HTMLElement>(null);

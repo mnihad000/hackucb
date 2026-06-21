@@ -18,6 +18,7 @@ from services.analyst_builder import build_analyst_result
 from services.counter_narrative_builder import build_counter_narratives
 from services.final_report_builder import apply_receipts_annotations, build_final_report
 from services.investigation_repository import InvestigationRepository
+from services.narrative_family_builder import build_narrative_family
 from services.timeline_builder import build_timeline
 
 
@@ -151,6 +152,7 @@ def test_final_report_builder_produces_claims_and_evidence_packet():
     retrieval = _retrieval(plan)
     timeline = build_timeline("inv_report", plan, retrieval, docs)
     counter = build_counter_narratives("inv_report", plan, retrieval, docs)
+    family = build_narrative_family("inv_report", plan, retrieval, docs, timeline, counter)
     analyst = build_analyst_result("inv_report", plan, retrieval, docs, timeline, counter)
     claim_counterpoints = build_claim_counterpoints(
         "inv_report",
@@ -168,6 +170,7 @@ def test_final_report_builder_produces_claims_and_evidence_packet():
         docs,
         timeline,
         counter,
+        family,
         analyst,
         claim_counterpoints,
     )
@@ -189,6 +192,7 @@ def test_final_report_result_persists_and_reloads(tmp_path):
     retrieval = _retrieval(plan)
     timeline = build_timeline("inv_report", plan, retrieval, docs)
     counter = build_counter_narratives("inv_report", plan, retrieval, docs)
+    family = build_narrative_family("inv_report", plan, retrieval, docs, timeline, counter)
     analyst = build_analyst_result("inv_report", plan, retrieval, docs, timeline, counter)
     claim_counterpoints = build_claim_counterpoints(
         "inv_report",
@@ -205,6 +209,7 @@ def test_final_report_result_persists_and_reloads(tmp_path):
         docs,
         timeline,
         counter,
+        family,
         analyst,
         claim_counterpoints,
     )
@@ -229,6 +234,7 @@ def test_apply_receipts_annotations_preserves_existing_report_fields():
     retrieval = _retrieval(plan)
     timeline = build_timeline("inv_report", plan, retrieval, docs)
     counter = build_counter_narratives("inv_report", plan, retrieval, docs)
+    family = build_narrative_family("inv_report", plan, retrieval, docs, timeline, counter)
     analyst = build_analyst_result("inv_report", plan, retrieval, docs, timeline, counter)
     claim_counterpoints = build_claim_counterpoints(
         "inv_report",
@@ -245,6 +251,7 @@ def test_apply_receipts_annotations_preserves_existing_report_fields():
         docs,
         timeline,
         counter,
+        family,
         analyst,
         claim_counterpoints,
     )

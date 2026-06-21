@@ -1,0 +1,36 @@
+{
+  "family_title": "Climate Policy Cost Narrative Family",
+  "parent_frame": "Broader framing that treats climate or utility policy as a household cost burden",
+  "summary": "The retrieved evidence groups the main narrative with adjacent cost-burden branches and a distinct corrective counter-frame.",
+  "active_branch_id": "family_main",
+  "selected_branch_ids": [
+    "family_main",
+    "family_related_1",
+    "family_counter_1"
+  ],
+  "branch_annotations": [
+    {
+      "branch_id": "family_main",
+      "title": "Hidden Energy Tax Main Branch",
+      "relationship_to_parent": "Primary branch carrying the investigated cost-burden framing.",
+      "branch_summary": "This branch anchors the retrieved corpus and captures the main household-cost framing."
+    },
+    {
+      "branch_id": "family_related_1",
+      "title": "Green Mandate Costs Mutation Branch",
+      "relationship_to_parent": "Adjacent phrase branch that rephrases the same affordability concern.",
+      "branch_summary": "This branch reflects nearby phrase evolution rather than a separate debate universe."
+    },
+    {
+      "branch_id": "family_counter_1",
+      "title": "Corrective Counter-Frame",
+      "relationship_to_parent": "Corrective branch pushing back on the main claim.",
+      "branch_summary": "This branch remains separate because it disputes the main framing rather than extending it."
+    }
+  ],
+  "mutation_summary": "The main branch shows a short phrase-evolution path from the original framing into adjacent affordability language across multiple source types.",
+  "limitations": [
+    "Semantic grouping is limited to the retrieved evidence packet."
+  ],
+  "confidence_score": 0.72
+}

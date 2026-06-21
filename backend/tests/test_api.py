@@ -3,6 +3,8 @@ import os
 from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ["DEMO_MODE"] = "true"
+from config import get_settings
+get_settings.cache_clear()
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,7 +12,13 @@ from main import app
 from api import narratives as narratives_api
 from models.document import Document
 from models.investigation import (
+    AgentDebateResult,
+    AnalystResult,
+    DraftReportSections,
+    FinalReportResult,
+    FinalReportSections,
     InvestigationPlan,
+    NarrativeFamilyResult,
     ReceiptsResult,
     RetrievalResult,
     SourceDiversityResult,
@@ -77,6 +85,31 @@ def _timeline_retrieval(investigation_id: str, plan: InvestigationPlan) -> Retri
     )
 
 
+def _recent_report(investigation_id: str, plan: InvestigationPlan) -> FinalReportResult:
+    return FinalReportResult(
+        investigation_id=investigation_id,
+        plan_snapshot=plan,
+        report_title="Hidden Energy Tax Investigation",
+        report_summary="Final persisted report summary.",
+        sections=FinalReportSections(
+            headline="headline",
+            executive_summary="summary",
+            observed_facts="facts",
+            reasonable_inferences="inferences",
+            timeline_summary="timeline",
+            counter_narrative_summary="counter",
+            limitations="limitations",
+            recommended_human_checks="checks",
+        ),
+        key_claims=[],
+        evidence_packet=[],
+        limitations=[],
+        recommended_human_checks=[],
+        confidence_score=0.6,
+        confidence_label="medium",
+    )
+
+
 def test_health():
     r = client.get("/health")
     assert r.status_code == 200
@@ -95,9 +128,11 @@ def test_root():
     assert any("/api/investigations/{id}/source-diversity" in endpoint for endpoint in data["endpoints"])
     assert any("/api/investigations/{id}/timeline" in endpoint for endpoint in data["endpoints"])
     assert any("/api/investigations/{id}/counter-narratives" in endpoint for endpoint in data["endpoints"])
+    assert any("/api/investigations/{id}/family" in endpoint for endpoint in data["endpoints"])
     assert any("/api/investigations/{id}/analyst" in endpoint for endpoint in data["endpoints"])
     assert any("/api/investigations/{id}/claim-counterpoints" in endpoint for endpoint in data["endpoints"])
     assert any("/api/investigations/{id}/receipts" in endpoint for endpoint in data["endpoints"])
+    assert any("/api/investigations/{id}/agent-debate" in endpoint for endpoint in data["endpoints"])
     assert any("/api/investigations/{id}/report" in endpoint for endpoint in data["endpoints"])
     assert any("/api/trending" in endpoint for endpoint in data["endpoints"])
 
@@ -253,8 +288,99 @@ def test_get_investigation_workspace_returns_persisted_artifacts(tmp_path, monke
     assert len(payload["retrieved_documents"]) == 2
     assert payload["source_diversity"] is None
     assert payload["timeline"]["timeline_summary"] == "cached timeline"
+    assert payload["narrative_family"] is None
     assert payload["claim_counterpoints"] is None
     assert payload["receipts"] is None
+    assert payload["agent_debate"] is None
+
+
+def test_list_recent_investigations_returns_live_summaries(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    planner_only = client.post(
+        "/api/investigate",
+        json={"query_text": "Draft-only investigation"},
+    ).json()["investigation_id"]
+
+    report_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Where did the hidden energy tax narrative come from?"},
+    )
+    report_id = report_response.json()["investigation_id"]
+    report_plan = repo.get_plan(report_id)
+    assert report_plan is not None
+    repo.save_retrieval_result(_timeline_retrieval(report_id, report_plan), _timeline_docs())
+    repo.save_final_report_result(_recent_report(report_id, report_plan))
+
+    fallback_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Trace the public housing narrative"},
+    )
+    fallback_id = fallback_response.json()["investigation_id"]
+    fallback_plan = repo.get_plan(fallback_id)
+    assert fallback_plan is not None
+    repo.save_retrieval_result(_timeline_retrieval(fallback_id, fallback_plan), _timeline_docs())
+    repo.save_timeline_result(
+        TimelineResult(
+            investigation_id=fallback_id,
+            plan_snapshot=fallback_plan,
+            timeline_events=[],
+            first_observed_doc_id="doc_1",
+            timeline_summary="Timeline fallback summary.",
+            limitations=[],
+            confidence_score=0.45,
+            confidence_label="medium",
+        )
+    )
+    repo.save_analyst_result(
+        AnalystResult(
+            investigation_id=fallback_id,
+            plan_snapshot=fallback_plan,
+            draft_report_sections=DraftReportSections(
+                executive_summary="Analyst fallback summary.",
+                observed_facts="facts",
+                reasonable_inferences="inferences",
+                timeline_summary="timeline",
+                counter_narrative_summary="counter",
+                uncertainties="uncertain",
+            ),
+            candidate_claims=[],
+            limitations=[],
+            recommended_human_checks=[],
+            confidence_score=0.55,
+            confidence_label="medium",
+        )
+    )
+
+    repo.save_plan("demo", "seeded demo", fallback_plan)
+    repo.save_retrieval_result(_timeline_retrieval("demo", fallback_plan), _timeline_docs())
+
+    response = client.get("/api/investigations?limit=5")
+    assert response.status_code == 200
+    payload = response.json()
+    ids = [item["investigation_id"] for item in payload]
+    assert planner_only not in ids
+    assert "demo" not in ids
+    assert report_id in ids
+    assert fallback_id in ids
+
+    report_item = next(item for item in payload if item["investigation_id"] == report_id)
+    assert report_item["report_title"] == "Hidden Energy Tax Investigation"
+    assert report_item["report_summary"] == "Final persisted report summary."
+    assert report_item["source_count"] == 2
+
+    fallback_item = next(item for item in payload if item["investigation_id"] == fallback_id)
+    assert fallback_item["report_summary"] == "Analyst fallback summary."
+
+
+def test_list_recent_investigations_returns_empty_when_none_exist(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    response = client.get("/api/investigations")
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_source_diversity_endpoint_builds_artifact_from_persisted_state(tmp_path, monkeypatch):
@@ -545,6 +671,75 @@ def test_counter_narratives_endpoint_404s_without_retrieval_result(tmp_path, mon
     assert response.status_code == 404
 
 
+def test_narrative_family_endpoint_builds_artifact_from_persisted_state(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    plan_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Where did the 'hidden energy tax' narrative come from?"},
+    )
+    assert plan_response.status_code == 200
+    investigation_id = plan_response.json()["investigation_id"]
+    plan = repo.get_plan(investigation_id)
+    assert plan is not None
+
+    retrieval = _timeline_retrieval(investigation_id, plan).model_copy(
+        update={
+            "counter_narrative_candidate_ids": ["doc_2"],
+            "main_narrative_document_ids": ["doc_1"],
+        }
+    )
+    repo.save_retrieval_result(retrieval, _timeline_docs())
+
+    response = client.post(f"/api/investigations/{investigation_id}/family", json={})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["investigation_id"] == investigation_id
+    assert payload["child_narratives"]
+    assert "mutation_trail" in payload
+    assert "generation_method" in payload
+    assert repo.get_narrative_family_result(investigation_id) is not None
+
+
+def test_narrative_family_endpoint_returns_cached_artifact_when_available(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    plan_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Where did the 'hidden energy tax' narrative come from?"},
+    )
+    investigation_id = plan_response.json()["investigation_id"]
+    plan = repo.get_plan(investigation_id)
+    assert plan is not None
+    repo.save_retrieval_result(_timeline_retrieval(investigation_id, plan), _timeline_docs())
+    repo.save_narrative_family_result(
+        NarrativeFamilyResult(
+            investigation_id=investigation_id,
+            plan_snapshot=plan,
+            family_title="family",
+            parent_frame="parent",
+            summary="summary",
+            child_narratives=[],
+            fastest_growing_child=None,
+            broadest_source_diversity_child=None,
+            limitations=[],
+            confidence_score=0.4,
+            confidence_label="low",
+        )
+    )
+
+    def _unexpected_build(*args, **kwargs):
+        raise AssertionError("narrative family builder should not run when cache is available")
+
+    monkeypatch.setattr(narratives_api, "build_narrative_family_artifact", _unexpected_build)
+
+    response = client.post(f"/api/investigations/{investigation_id}/family", json={})
+    assert response.status_code == 200
+    assert response.json()["cached"] is True
+
+
 def test_analyst_endpoint_builds_artifact_from_persisted_state(tmp_path, monkeypatch):
     repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
     monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
@@ -677,7 +872,7 @@ def test_receipts_endpoint_returns_cached_artifact_when_available(tmp_path, monk
     def _unexpected_build(*args, **kwargs):
         raise AssertionError("receipts builder should not run when cache is available")
 
-    monkeypatch.setattr(narratives_api, "build_receipts_artifact", _unexpected_build)
+    monkeypatch.setattr(narratives_api, "build_receipts_agent", _unexpected_build)
 
     response = client.post(f"/api/investigations/{investigation_id}/receipts", json={})
     assert response.status_code == 200
@@ -696,6 +891,75 @@ def test_receipts_endpoint_404s_without_retrieval_result(tmp_path, monkeypatch):
 
     response = client.post(f"/api/investigations/{investigation_id}/receipts", json={})
     assert response.status_code == 404
+
+
+def test_agent_debate_endpoint_builds_artifact_from_persisted_state(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    plan_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Where did the 'hidden energy tax' narrative come from?"},
+    )
+    assert plan_response.status_code == 200
+    investigation_id = plan_response.json()["investigation_id"]
+    plan = repo.get_plan(investigation_id)
+    assert plan is not None
+
+    retrieval = _timeline_retrieval(investigation_id, plan).model_copy(
+        update={
+            "counter_narrative_candidate_ids": ["doc_2"],
+            "main_narrative_document_ids": ["doc_1"],
+        }
+    )
+    repo.save_retrieval_result(retrieval, _timeline_docs())
+
+    response = client.post(f"/api/investigations/{investigation_id}/agent-debate", json={})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["investigation_id"] == investigation_id
+    assert payload["analyst_position"]
+    assert repo.get_agent_debate_result(investigation_id) is not None
+
+
+def test_agent_debate_endpoint_returns_cached_artifact_when_available(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    plan_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Where did the 'hidden energy tax' narrative come from?"},
+    )
+    investigation_id = plan_response.json()["investigation_id"]
+    plan = repo.get_plan(investigation_id)
+    assert plan is not None
+    repo.save_retrieval_result(_timeline_retrieval(investigation_id, plan), _timeline_docs())
+    repo.save_agent_debate_result(
+        AgentDebateResult(
+            investigation_id=investigation_id,
+            plan_snapshot=plan,
+            analyst_position="analyst",
+            skeptic_response="skeptic",
+            receipts_check="receipts",
+            counter_narrative_note="counter",
+            safety_grounding_decision="decision",
+            final_language_decision="language",
+            rejected_claims=[],
+            softened_claims=[],
+            limitations=[],
+            confidence_score=0.5,
+            confidence_label="medium",
+        )
+    )
+
+    def _unexpected_build(*args, **kwargs):
+        raise AssertionError("agent debate builder should not run when cache is available")
+
+    monkeypatch.setattr(narratives_api, "build_agent_debate_artifact", _unexpected_build)
+
+    response = client.post(f"/api/investigations/{investigation_id}/agent-debate", json={})
+    assert response.status_code == 200
+    assert response.json()["cached"] is True
 
 
 def test_final_report_endpoint_builds_artifact_from_persisted_state(tmp_path, monkeypatch):
@@ -729,7 +993,9 @@ def test_final_report_endpoint_builds_artifact_from_persisted_state(tmp_path, mo
     assert "counterpoint_summary" in payload["key_claims"][0]
     assert "support_status" in payload["key_claims"][0]
     assert repo.get_source_diversity_result(investigation_id) is not None
+    assert repo.get_narrative_family_result(investigation_id) is not None
     assert repo.get_receipts_result(investigation_id) is not None
+    assert repo.get_agent_debate_result(investigation_id) is not None
 
 
 def test_final_report_endpoint_404s_without_retrieval_result(tmp_path, monkeypatch):

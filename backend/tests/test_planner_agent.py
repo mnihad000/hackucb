@@ -114,6 +114,15 @@ def test_plan_investigation_falls_back_on_model_failure():
     assert isinstance(plan, InvestigationPlan)
 
 
+def test_plan_investigation_baseline_avoids_forbidden_origin_language():
+    client = _AlwaysFailClient()
+    plan = plan_investigation(
+        "Where did the hidden energy tax narrative come from?",
+        model_client=client,
+    )
+    validate_no_forbidden_language(plan.model_dump())
+
+
 def test_forbidden_language_rejects_origin_overclaim():
     with pytest.raises(ValueError, match="true origin"):
         validate_no_forbidden_language({"summary": "We found the true origin of the narrative."})

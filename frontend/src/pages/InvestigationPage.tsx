@@ -6,15 +6,17 @@ import { Waves } from "../components/ui/wave-background";
 import {
   ApiError,
   getInvestigationWorkspace,
+  runAgentDebate,
   runAnalyst,
   runClaimCounterpoints,
   runCounterNarratives,
+  runNarrativeFamily,
   runReport,
+  runReceipts,
   runRetrieval,
   runSourceDiversity,
   runTimeline,
 } from "../lib/api";
-import { getInvestigationExperience } from "../lib/demoData";
 import {
   buildInvestigationExperienceFromWorkspace,
   formatClaimConfidence,
@@ -27,26 +29,26 @@ import {
   getSourceDiversityHighlights,
   getStageLabel,
   getTopClaims,
-  isLiveInvestigationId,
 } from "../lib/liveInvestigation";
 import type { LiveInvestigationWorkspace, LiveSourceDiversityResult } from "../types/rhetoriq";
 
 export default function InvestigationPage() {
-  const { id = "demo" } = useParams();
+  const { id = "" } = useParams();
   const [searchParams] = useSearchParams();
   const query = searchParams.get("q") ?? undefined;
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isRunningPipeline, setIsRunningPipeline] = useState(false);
+  const [isNotFound, setIsNotFound] = useState(false);
   const [workspace, setWorkspace] = useState<LiveInvestigationWorkspace | null>(null);
-  const isLiveInvestigation = isLiveInvestigationId(id);
 
   useEffect(() => {
-    if (!isLiveInvestigation) {
+    if (!id) {
       setWorkspace(null);
       setErrorMessage(null);
       setIsLoading(false);
       setIsRunningPipeline(false);
+      setIsNotFound(true);
       return;
     }
 
@@ -55,6 +57,7 @@ export default function InvestigationPage() {
     async function hydrateLiveInvestigation() {
       setIsLoading(true);
       setErrorMessage(null);
+      setIsNotFound(false);
 
       try {
         let nextWorkspace = await getInvestigationWorkspace(id);
@@ -114,6 +117,18 @@ export default function InvestigationPage() {
           });
         }
 
+        if (!nextWorkspace.narrative_family) {
+          setIsRunningPipeline(true);
+          await runNarrativeFamily(id);
+          nextWorkspace = await getInvestigationWorkspace(id);
+          if (cancelled) {
+            return;
+          }
+          startTransition(() => {
+            setWorkspace(nextWorkspace);
+          });
+        }
+
         if (!nextWorkspace.analyst) {
           setIsRunningPipeline(true);
           await runAnalyst(id);
@@ -138,6 +153,30 @@ export default function InvestigationPage() {
           });
         }
 
+        if (!nextWorkspace.receipts) {
+          setIsRunningPipeline(true);
+          await runReceipts(id);
+          nextWorkspace = await getInvestigationWorkspace(id);
+          if (cancelled) {
+            return;
+          }
+          startTransition(() => {
+            setWorkspace(nextWorkspace);
+          });
+        }
+
+        if (!nextWorkspace.agent_debate) {
+          setIsRunningPipeline(true);
+          await runAgentDebate(id);
+          nextWorkspace = await getInvestigationWorkspace(id);
+          if (cancelled) {
+            return;
+          }
+          startTransition(() => {
+            setWorkspace(nextWorkspace);
+          });
+        }
+
         if (!nextWorkspace.report) {
           setIsRunningPipeline(true);
           await runReport(id);
@@ -151,11 +190,17 @@ export default function InvestigationPage() {
         }
       } catch (error) {
         if (!cancelled) {
-          setErrorMessage(
-            error instanceof ApiError
-              ? error.message
-              : "Unable to load the live investigation.",
-          );
+          setWorkspace(null);
+          if (error instanceof ApiError && error.status === 404) {
+            setIsNotFound(true);
+            setErrorMessage(null);
+          } else {
+            setErrorMessage(
+              error instanceof ApiError
+                ? error.message
+                : "Unable to load the live investigation.",
+            );
+          }
         }
       } finally {
         if (!cancelled) {
@@ -170,13 +215,11 @@ export default function InvestigationPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, isLiveInvestigation]);
+  }, [id]);
 
-  const experience = isLiveInvestigation
-    ? workspace
-      ? buildInvestigationExperienceFromWorkspace(workspace)
-      : null
-    : getInvestigationExperience(id, query);
+  const experience = workspace
+    ? buildInvestigationExperienceFromWorkspace(workspace)
+    : null;
   const coverageHighlights = workspace ? getCoverageHighlights(workspace) : [];
   const limitations = workspace ? getLimitations(workspace) : [];
   const recommendedChecks = workspace ? getRecommendedChecks(workspace) : [];
@@ -255,11 +298,13 @@ export default function InvestigationPage() {
                 </div>
               </div>
             </div>
+          ) : isNotFound ? (
+            <InvestigationNotFoundCard investigationId={id} />
           ) : (
             <LoadingHero query={query} />
           )}
 
-          {isLiveInvestigation ? (
+          {!isNotFound ? (
             <PipelineStatusCard
               errorMessage={errorMessage}
               isLoading={isLoading}
@@ -295,9 +340,19 @@ export default function InvestigationPage() {
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(18rem,24rem)]">
               <div className="space-y-6">
                 {experience ? <InvestigationFlowchart data={experience.flowchartData} /> : null}
+                {workspace.timeline ? <TimelineCard timeline={workspace.timeline} /> : null}
+                {workspace.narrative_family ? (
+                  <NarrativeFamilyCard
+                    family={workspace.narrative_family}
+                    documents={workspace.retrieved_documents}
+                  />
+                ) : null}
                 {topClaims.length > 0 ? <ClaimsCard claims={topClaims} /> : null}
               </div>
               <div className="space-y-6">
+                {workspace.agent_debate ? (
+                  <AgentDebateCard debate={workspace.agent_debate} />
+                ) : null}
                 {coverageHighlights.length > 0 ? (
                   <InfoCard title="Coverage">
                     {coverageHighlights.map((item) => (
@@ -344,7 +399,7 @@ export default function InvestigationPage() {
             </div>
           ) : null}
 
-          {!workspace && !experience && errorMessage ? (
+          {!workspace && !experience && errorMessage && !isNotFound ? (
             <div className="rounded-[1.6rem] border border-[rgba(146,71,71,0.18)] bg-[rgba(255,244,244,0.92)] p-6 text-sm leading-7 text-[rgb(130,50,50)]">
               {errorMessage}
             </div>
@@ -367,6 +422,38 @@ function LoadingHero({ query }: { query?: string }) {
           ? `Preparing evidence-backed investigation for "${query}".`
           : "Preparing evidence-backed investigation."}
       </p>
+    </div>
+  );
+}
+
+function InvestigationNotFoundCard({
+  investigationId,
+}: {
+  investigationId: string;
+}) {
+  return (
+    <div className="investigation-hero page-enter overflow-hidden rounded-[2.2rem] border border-[rgba(146,71,71,0.18)] bg-[rgba(255,244,244,0.92)] p-7 shadow-[0_55px_90px_-54px_rgba(130,50,50,0.24)] backdrop-blur-xl sm:p-9">
+      <p className="eyebrow">Investigation unavailable</p>
+      <h1 className="mt-5 font-[Iowan_Old_Style,Palatino_Linotype,Book_Antiqua,Georgia,serif] text-4xl font-semibold tracking-[-0.05em] text-[var(--ink)] sm:text-5xl lg:text-6xl">
+        Investigation not found
+      </h1>
+      <p className="mt-5 max-w-3xl text-lg leading-8 text-[var(--muted)]">
+        {`The live investigation "${investigationId}" could not be found. Old seeded demo routes are no longer supported.`}
+      </p>
+      <div className="mt-7 flex flex-wrap gap-3">
+        <Link
+          to="/"
+          className="inline-flex items-center justify-center rounded-[1.1rem] bg-[var(--ink)] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[var(--accent)]"
+        >
+          Back to homepage
+        </Link>
+        <Link
+          to="/#ask-rhetoriq"
+          className="inline-flex items-center justify-center rounded-[1.1rem] border border-[var(--border)] bg-white px-5 py-3 text-sm font-semibold text-[var(--ink)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+        >
+          Start a new investigation
+        </Link>
+      </div>
     </div>
   );
 }
@@ -419,8 +506,17 @@ function ClaimsCard({
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="data-pill">{claim.claim_type}</span>
               <span className="data-pill">{formatClaimConfidence(claim)}</span>
+              {claim.support_status ? (
+                <span className="data-pill">{claim.support_status.replaceAll("_", " ")}</span>
+              ) : null}
+              {claim.verification_state ? (
+                <span className="data-pill">{claim.verification_state.replaceAll("_", " ")}</span>
+              ) : null}
             </div>
             <p className="mt-4 text-base leading-7 text-[var(--ink)]">{claim.claim_text}</p>
+            {claim.support_summary ? (
+              <p className="mt-3 text-sm leading-6 text-[var(--muted)]">{claim.support_summary}</p>
+            ) : null}
             {claim.counterpoint_summary ? (
               <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
                 Counterpoint: {claim.counterpoint_summary}
@@ -439,6 +535,278 @@ function ClaimsCard({
           </article>
         ))}
       </div>
+    </div>
+  );
+}
+
+function TimelineCard({
+  timeline,
+}: {
+  timeline: NonNullable<LiveInvestigationWorkspace["timeline"]>;
+}) {
+  return (
+    <div className="rounded-[2rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.86)] p-7 shadow-[0_38px_68px_-46px_rgba(19,35,58,0.4)] backdrop-blur-xl sm:p-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="eyebrow">Timeline</p>
+          <p className="mt-4 max-w-3xl text-base leading-7 text-[var(--muted)]">
+            {timeline.timeline_summary}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="data-pill">{timeline.confidence_label} confidence</span>
+          <span className="data-pill">{timeline.timeline_events.length} events</span>
+        </div>
+      </div>
+
+      <div className="mt-6 space-y-4">
+        {timeline.timeline_events.slice(0, 6).map((event) => (
+          <article
+            key={event.id}
+            className="rounded-[1.35rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5"
+          >
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="data-pill">{event.event_type.replaceAll("_", " ")}</span>
+              <span className="data-pill">{event.narrative_side}</span>
+            </div>
+            <h3 className="mt-4 text-lg font-semibold tracking-[-0.03em] text-[var(--ink)]">
+              {event.title}
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+              {formatTimestamp(event.timestamp)} · {event.source_name}
+            </p>
+            <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{event.explanation}</p>
+            {event.snippet ? (
+              <p className="mt-3 rounded-[1rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(245,247,250,0.9)] px-4 py-3 text-sm leading-6 text-[var(--muted)]">
+                {event.snippet}
+              </p>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NarrativeFamilyCard({
+  family,
+  documents,
+}: {
+  family: NonNullable<LiveInvestigationWorkspace["narrative_family"]>;
+  documents: LiveInvestigationWorkspace["retrieved_documents"];
+}) {
+  const documentMap = new Map(documents.map((document) => [document.id, document]));
+  const fastest = family.fastest_growing_child;
+  const broadest = family.broadest_source_diversity_child;
+  const activeBranchId = family.active_branch_id;
+
+  return (
+    <div className="rounded-[2rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.86)] p-7 shadow-[0_38px_68px_-46px_rgba(19,35,58,0.4)] backdrop-blur-xl sm:p-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="eyebrow">Narrative family</p>
+          <h2 className="mt-4 text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+            {family.family_title}
+          </h2>
+          <p className="mt-3 text-base leading-7 text-[var(--muted)]">
+            {family.summary}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="data-pill">{family.confidence_label} confidence</span>
+          <span className="data-pill">{family.child_narratives.length} branches</span>
+          <span className="data-pill">{family.generation_method.replaceAll("_", " ")}</span>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+        <div className="rounded-[1.4rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5">
+          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+            Parent frame
+          </p>
+          <p className="mt-3 text-lg font-semibold text-[var(--ink)]">{family.parent_frame}</p>
+          <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+            RhetoriQ maps semantic framing and mutation patterns in the retrieved corpus.
+            It does not treat family placement as proof of coordination or truth.
+          </p>
+        </div>
+
+        <div className="rounded-[1.4rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+              Mutation rail
+            </p>
+            <span className="data-pill">{family.mutation_trail.length} steps</span>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-[var(--ink)]">
+            {family.mutation_summary || "No strong phrase evolution chain was isolated for this branch."}
+          </p>
+          {family.mutation_trail.length > 0 ? (
+            <div className="mt-4 space-y-3">
+              {family.mutation_trail.map((step) => {
+                const fromDoc = documentMap.get(step.from_doc_id);
+                const toDoc = documentMap.get(step.to_doc_id);
+                return (
+                  <article
+                    key={`${step.from_doc_id}-${step.to_doc_id}-${step.from_phrase}-${step.to_phrase}`}
+                    className="rounded-[1.1rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(245,247,250,0.94)] p-4"
+                  >
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="data-pill">{step.mutation_type.replaceAll("_", " ")}</span>
+                      <span className="data-pill">{Math.round(step.similarity_score * 100)}% match</span>
+                      <span className="data-pill">{Math.round(step.time_delta_hours)}h later</span>
+                      {step.source_shift ? <span className="data-pill">source shift</span> : null}
+                    </div>
+                    <p className="mt-4 text-base font-semibold leading-7 text-[var(--ink)]">
+                      {step.from_phrase} {"->"} {step.to_phrase}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                      {fromDoc ? `${fromDoc.source_name} -> ` : ""}
+                      {toDoc ? toDoc.source_name : "later source"}
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{step.explanation}</p>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mt-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+            Branches
+          </p>
+          {activeBranchId ? <span className="data-pill">active branch highlighted</span> : null}
+        </div>
+
+        <div className="mt-4 space-y-4">
+          {family.child_narratives.map((child) => {
+            const firstObservedDoc = child.first_observed_doc_id
+              ? documentMap.get(child.first_observed_doc_id)
+              : null;
+            const isActive = child.id === activeBranchId;
+            return (
+              <article
+                key={child.id}
+                className={`rounded-[1.35rem] border bg-white/92 p-5 ${
+                  isActive
+                    ? "border-[rgba(160,106,46,0.32)] shadow-[0_24px_44px_-34px_rgba(160,106,46,0.34)]"
+                    : "border-[rgba(19,35,58,0.08)]"
+                }`}
+              >
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="data-pill">{describeBranchType(child.branch_type)}</span>
+                  <span className="data-pill">{child.growth_status}</span>
+                  {isActive ? <span className="data-pill">active branch</span> : null}
+                  {child.id === fastest ? <span className="data-pill">fastest growing</span> : null}
+                  {child.id === broadest ? <span className="data-pill">broadest sources</span> : null}
+                </div>
+                <h3 className="mt-4 text-lg font-semibold tracking-[-0.03em] text-[var(--ink)]">
+                  {child.title}
+                </h3>
+                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                  {child.relationship_to_parent}
+                </p>
+                <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{child.branch_summary}</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <span className="data-pill">{child.source_count} sources</span>
+                  <span className="data-pill">{child.source_type_count} source types</span>
+                  {firstObservedDoc ? (
+                    <span className="data-pill">
+                      first observed: {firstObservedDoc.source_name}
+                    </span>
+                  ) : null}
+                </div>
+                {child.related_phrases.length > 0 ? (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {child.related_phrases.map((phrase) => (
+                      <span
+                        key={`${child.id}-${phrase}`}
+                        className="rounded-full border border-[rgba(19,35,58,0.08)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]"
+                      >
+                        {phrase}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgentDebateCard({
+  debate,
+}: {
+  debate: NonNullable<LiveInvestigationWorkspace["agent_debate"]>;
+}) {
+  return (
+    <div className="rounded-[1.7rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.88)] p-5 shadow-[0_24px_44px_-34px_rgba(19,35,58,0.34)]">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+          Agent debate
+        </p>
+        <span className="data-pill">{debate.confidence_label} confidence</span>
+      </div>
+
+      <div className="mt-4 space-y-4">
+        <DebateBlock title="Analyst Agent" value={debate.analyst_position} />
+        <DebateBlock title="Skeptic Summary" value={debate.skeptic_response} />
+        <DebateBlock title="Receipts Check" value={debate.receipts_check} />
+        <DebateBlock title="Counter-Narrative Note" value={debate.counter_narrative_note} />
+        <DebateBlock title="Safety / Grounding" value={debate.safety_grounding_decision} />
+        <DebateBlock title="Final Language Decision" value={debate.final_language_decision} />
+
+        {debate.rejected_claims.length > 0 ? (
+          <div className="rounded-[1.1rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-4">
+            <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+              Rejected claims
+            </p>
+            <div className="mt-3 space-y-2">
+              {debate.rejected_claims.map((item) => (
+                <p key={item} className="text-sm leading-6 text-[var(--ink)]">
+                  {item}
+                </p>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {debate.softened_claims.length > 0 ? (
+          <div className="rounded-[1.1rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-4">
+            <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+              Softened claims
+            </p>
+            <div className="mt-3 space-y-3">
+              {debate.softened_claims.map((item) => (
+                <div key={item.claim_id} className="rounded-[0.95rem] bg-[rgba(245,247,250,0.9)] p-3">
+                  <p className="text-sm font-semibold text-[var(--ink)]">{item.original}</p>
+                  <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{item.softened}</p>
+                  <p className="mt-2 text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                    {item.reason}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function DebateBlock({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-[1.1rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-4">
+      <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+        {title}
+      </p>
+      <p className="mt-3 text-sm leading-7 text-[var(--ink)]">{value}</p>
     </div>
   );
 }
@@ -507,4 +875,15 @@ function formatDistributionLine(label: string, distribution: Record<string, numb
     .map(([key, count]) => `${key.replaceAll("_", " ")}: ${count}`)
     .join(", ");
   return `${label}: ${summary}`;
+}
+
+function describeBranchType(value: "main" | "counter" | "related" | "mutation") {
+  return value.replaceAll("_", " ");
+}
+
+function formatTimestamp(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }

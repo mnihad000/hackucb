@@ -17,6 +17,7 @@ from services.document_normalizer import DocumentNormalizer
 from services.investigation_repository import InvestigationRepository
 from services.page_fetcher import HttpPageFetcher
 from services.search_provider import TavilySearchProvider
+from services.verification import VerificationService
 
 
 def _plan() -> InvestigationPlan:
@@ -138,6 +139,37 @@ def test_document_normalizer_builds_document():
     assert doc.author == "Jane Doe"
     assert doc.published_at is not None
     assert "hidden energy tax" in " ".join(doc.phrases)
+
+
+def test_document_normalizer_normalizes_naive_published_at_to_utc():
+    normalizer = DocumentNormalizer()
+    page = RawPage(
+        url="https://example.com/story",
+        final_url="https://example.com/story",
+        status_code=200,
+        content_type="text/html",
+        html="""
+            <html lang="en">
+            <head>
+              <title>Hidden Energy Tax Story</title>
+              <meta property="article:published_time" content="2026-06-03T08:00:00">
+            </head>
+            <body><article><p>The hidden energy tax debate spread quickly.</p></article></body>
+            </html>
+        """,
+        fetched_at=datetime.now(timezone.utc),
+    )
+    result = SearchResult(
+        query="hidden energy tax",
+        title="Hidden Energy Tax Story",
+        url="https://example.com/story",
+        snippet="The hidden energy tax debate spread quickly.",
+        rank=1,
+        provider="tavily",
+    )
+    doc = normalizer.normalize(page, _plan(), result)
+    assert doc.published_at is not None
+    assert doc.published_at.tzinfo == timezone.utc
 
 
 def test_repository_persists_plan_and_result(tmp_path):
@@ -328,3 +360,34 @@ def test_retriever_agent_scores_requested_source_types_and_receipt_ready_docs(tm
     top_doc, _ = scored[0]
     assert top_doc.id == "doc_official"
     assert "receipt_snippet" in (top_doc.metadata or {}).get("retrieval_reason_tags", [])
+
+
+def test_verification_service_returns_pending_in_live_mode(monkeypatch):
+    from config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "DEMO_MODE", False)
+
+    service = VerificationService()
+    doc = Document(
+        id="doc_live",
+        source_id="src_live",
+        source_name="example.com",
+        source_type="national_news",
+        url="https://example.com/story",
+        title="Example story",
+        published_at=datetime(2026, 6, 3, 10, 0, tzinfo=timezone.utc),
+        collected_at=datetime(2026, 6, 19, tzinfo=timezone.utc),
+        text="Example story body.",
+        snippet="Example story body.",
+        language="en",
+        content_type="article",
+        geographic_scope="national",
+        entities=[],
+        phrases=[],
+        metadata={},
+    )
+
+    result = service.verify_source(doc)
+    assert result["verification_status"] == "pending"
+    assert result["stored_title"] == "Example story"

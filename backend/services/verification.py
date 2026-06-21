@@ -2,17 +2,19 @@
 Browserbase source verification service.
 
 Demo mode: returns pre-built results from DEMO_VERIFICATIONS.
-Real mode (swap-in): opens the live URL with Browserbase, extracts metadata,
-compares against stored document, and sets verification_status accordingly.
+Real mode currently returns pending verification until live Browserbase
+verification is fully wired.
 
 Three honest status values:
-  verified          — live page matches stored metadata
-  source_updated    — live title/snippet differs from stored version
-  unavailable       — page returned 404 or is paywalled / blocked
+  verified          - live page matches stored metadata
+  metadata_mismatch - live title/snippet differs from stored version
+  unavailable       - page returned 404 or is paywalled / blocked
 
 Failures are features, not bugs. Showing a metadata mismatch or unavailable
 page is more credible than an all-green result.
 """
+
+from datetime import datetime, timezone
 
 from config import get_settings
 from models.document import Document
@@ -27,7 +29,8 @@ class VerificationService:
         """
         Returns a verification result dict for a single document.
         Demo mode: looks up pre-built result from DEMO_VERIFICATIONS.
-        Real mode: calls Browserbase, visits doc.url, extracts and compares metadata.
+        Real mode: returns a pending verification record until live browser
+        verification is implemented.
         """
         from demo_data import DEMO_VERIFICATIONS
 
@@ -35,7 +38,6 @@ class VerificationService:
             result = DEMO_VERIFICATIONS.get(doc.id)
             if result:
                 return result
-            # Default for documents not in the verification dict
             return {
                 "doc_id": doc.id,
                 "url": doc.url,
@@ -47,20 +49,16 @@ class VerificationService:
                 "checked_at": None,
             }
 
-        from agents.browserbase_agent import get_browserbase_agent
-        agent = get_browserbase_agent()
-        receipt = agent.verify_document(doc)
         return {
             "doc_id": doc.id,
             "url": doc.url,
-            "verification_status": receipt.verified_status,
-            "live_title": receipt.live_title,
-            "stored_title": receipt.stored_title,
-            "snippet_match": receipt.evidence_snippet is not None,
-            "page_available": receipt.verified_status not in ("unavailable", "blocked"),
-            "checked_at": receipt.checked_at,
-            "support_reason": receipt.support_reason,
-            "author": receipt.author,
+            "verification_status": "pending",
+            "live_title": None,
+            "stored_title": doc.title,
+            "snippet_match": None,
+            "page_available": None,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "note": "Live browser verification is not wired yet, so verification remains pending.",
         }
 
     def verify_evidence_items(self, evidence: list[EvidenceItem], all_docs: list[Document]) -> list[EvidenceItem]:

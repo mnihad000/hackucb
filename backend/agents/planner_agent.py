@@ -53,7 +53,8 @@ _SOURCE_TYPE_HINTS: list[tuple[tuple[str, ...], list[str]]] = [
     (("local", "city", "county", "state"), ["local_news"]),
     (("national", "mainstream", "media"), ["national_news"]),
 ]
-_QUOTE_CHARS = "\"'“”‘’"
+_QUOTE_CHARS = "\"'\u201c\u201d\u2018\u2019"
+_PHRASE_SUFFIXES = (" come from",)
 _STOPWORDS = {
     "a",
     "about",
@@ -228,7 +229,7 @@ def _build_baseline_plan(
         time_window=time_window,
         retrieval_mode=retrieval_mode,
         risk_notes=[
-            "Use 'first observed in our dataset' instead of claiming true origin.",
+            "Use 'first observed in our dataset' instead of claiming a definitive origin.",
             "Do not infer coordination or intent from timing alone.",
             "Return an evidence-seeking plan, not a user-facing answer.",
         ],
@@ -245,18 +246,9 @@ def _extract_canonical_phrase(query_text: str) -> str | None:
         query_text,
     )
     if quoted:
-        return quoted[0].strip()
+        return _normalize_phrase_candidate(quoted[0])
 
     lowered = query_text.lower()
-    match = re.search(
-        r"(?:phrase|narrative|claim)\s+(?:behind\s+)?(?:the\s+)?([a-z0-9][a-z0-9\s\-]{3,80})",
-        lowered,
-    )
-    if match:
-        candidate = re.sub(r"\s+", " ", match.group(1)).strip(" .?!,:;")
-        if candidate and candidate not in {"this", "that", "it"}:
-            return candidate
-
     phrase_patterns = [
         r"where did the ([a-z0-9][a-z0-9\s\-]{3,80}?) (?:narrative|claim|phrase) come from",
         r"trace the ([a-z0-9][a-z0-9\s\-]{3,80}?) (?:narrative|story|claim)",
@@ -264,10 +256,18 @@ def _extract_canonical_phrase(query_text: str) -> str | None:
     ]
     for pattern in phrase_patterns:
         match = re.search(pattern, lowered)
-        if match:
-            candidate = re.sub(r"\s+", " ", match.group(1)).strip(" .?!,:;")
-            if candidate and candidate not in {"this", "that", "it"}:
-                return candidate
+        if not match:
+            continue
+        candidate = _normalize_phrase_candidate(match.group(1))
+        if candidate:
+            return candidate
+
+    match = re.search(
+        r"(?:phrase|narrative|claim)\s+(?:behind\s+)?(?:the\s+)?([a-z0-9][a-z0-9\s\-]{3,80})",
+        lowered,
+    )
+    if match:
+        return _normalize_phrase_candidate(match.group(1))
 
     return None
 
@@ -419,3 +419,15 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
         seen.add(key)
         result.append(normalized)
     return result
+
+
+def _normalize_phrase_candidate(value: str) -> str | None:
+    candidate = re.sub(r"\s+", " ", value).strip(" .?!,:;")
+    lowered = candidate.lower()
+    for suffix in _PHRASE_SUFFIXES:
+        if lowered.endswith(suffix):
+            candidate = candidate[: -len(suffix)].strip(" .?!,:;")
+            lowered = candidate.lower()
+    if not candidate or lowered in {"this", "that", "it"}:
+        return None
+    return candidate

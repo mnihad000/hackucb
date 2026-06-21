@@ -107,10 +107,16 @@ class DocumentNormalizer:
             if not candidate:
                 continue
             try:
-                return datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+                parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+                return self._to_utc(parsed)
             except ValueError:
                 continue
         return None
+
+    def _to_utc(self, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     def _extract_lang(self, html_text: str) -> str | None:
         match = re.search(r"<html[^>]+lang=[\"']([a-zA-Z\-]+)[\"']", html_text, re.IGNORECASE)

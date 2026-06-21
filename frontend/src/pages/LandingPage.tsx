@@ -1,11 +1,17 @@
-import { forwardRef, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import {
   motion,
+  useMotionValue,
+  useMotionValueEvent,
   useScroll,
   useSpring,
-  useTransform,
-  type MotionValue,
   type Variants,
 } from "framer-motion";
 import Header from "../components/layout/Header";
@@ -15,20 +21,10 @@ import type { RadarTopic } from "../types/rhetoriq";
 
 const EASE_OUT = [0.16, 1, 0.3, 1] as const;
 
-export default function LandingPage() {
-  const streamRef = useRef<HTMLDivElement>(null);
-  const promptRef = useRef<HTMLDivElement>(null);
+type Point = { x: number; y: number };
 
-  // The line "draws" downward as the stream scrolls through the viewport.
-  const { scrollYProgress } = useScroll({
-    target: streamRef,
-    offset: ["start 0.65", "end 0.85"],
-  });
-  const draw = useSpring(scrollYProgress, {
-    stiffness: 90,
-    damping: 24,
-    restDelta: 0.001,
-  });
+export default function LandingPage() {
+  const streamRef = useRef<HTMLElement>(null);
 
   function scrollToStream() {
     streamRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -38,48 +34,7 @@ export default function LandingPage() {
     <main className="relative overflow-x-clip">
       <Header />
       <Hero onGetStarted={scrollToStream} />
-
-      {/* ── Narrative spine: the line that runs through every trending story ── */}
-      <section ref={streamRef} className="relative px-4 pb-4 pt-10 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-5xl">
-          <SpineHeading />
-
-          <div className="relative mt-14">
-            {/* Static track */}
-            <div
-              aria-hidden="true"
-              className="absolute bottom-0 left-1/2 top-0 w-px -translate-x-1/2 bg-[var(--border)]"
-            />
-            {/* Drawn line (follows scroll) */}
-            <motion.div
-              aria-hidden="true"
-              className="absolute left-1/2 top-0 w-px -translate-x-1/2 origin-top bg-[var(--ink)]"
-              style={{ bottom: 0, scaleY: draw }}
-            />
-            {/* Traveling node at the tip of the drawn line */}
-            <TravelingNode progress={draw} />
-
-            {/* Story rows */}
-            <div className="relative">
-              {radarTopics.map((topic, index) => (
-                <StoryRow key={topic.id} topic={topic} index={index} />
-              ))}
-            </div>
-
-            {/* Terminal node into the prompt */}
-            <div
-              aria-hidden="true"
-              className="relative z-10 mx-auto flex h-10 w-10 -translate-y-2 items-center justify-center"
-            >
-              <span className="absolute h-3 w-3 rounded-full bg-[var(--ink)]" />
-              <span className="absolute h-10 w-10 rounded-full border border-[var(--ink)] opacity-20" />
-            </div>
-          </div>
-
-          {/* ── The line ends here: prompt to begin an investigation ── */}
-          <PromptModule ref={promptRef} />
-        </div>
-      </section>
+      <Stream ref={streamRef} />
     </main>
   );
 }
@@ -102,7 +57,7 @@ function Hero({ onGetStarted }: { onGetStarted: () => void }) {
 
   return (
     <section className="relative flex min-h-[88vh] flex-col items-center justify-center px-4 text-center sm:px-6">
-      {/* Faint vertical seed of the spine, descending from the headline */}
+      {/* Faint vertical seed of the curve, descending from the headline */}
       <motion.div
         aria-hidden="true"
         initial={{ scaleY: 0, opacity: 0 }}
@@ -173,8 +128,232 @@ function Hero({ onGetStarted }: { onGetStarted: () => void }) {
 }
 
 /* ════════════════════════════════════════════════════════════
-   SPINE — heading + traveling node
+   STREAM — serpentine curve weaving under each story card
 ════════════════════════════════════════════════════════════ */
+
+/**
+ * Fluid serpentine path. Each segment is a cubic bezier whose control points
+ * share the endpoints' x — giving a vertical tangent at every node, so the
+ * curve runs straight down *under* each card, bows to that card's side, then
+ * smoothly S-weaves across to the next card. A flowing ribbon, not diagonals.
+ */
+function buildSmoothPath(points: Point[]): string {
+  if (points.length < 2) return "";
+  const f = (n: number) => n.toFixed(2);
+  let d = `M ${f(points[0].x)} ${f(points[0].y)}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    const midY = (a.y + b.y) / 2;
+    d += ` C ${f(a.x)} ${f(midY)}, ${f(b.x)} ${f(midY)}, ${f(b.x)} ${f(b.y)}`;
+  }
+  return d;
+}
+
+const Stream = forwardRef<HTMLElement>(function Stream(_props, forwardedRef) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const pathRef = useRef<SVGPathElement>(null);
+  const anchorsRef = useRef<Point[]>([]);
+  const totalLenRef = useRef(0);
+
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  const [pathD, setPathD] = useState("");
+  const [fractions, setFractions] = useState<number[]>([]);
+  const [lit, setLit] = useState<boolean[]>(() => radarTopics.map(() => false));
+
+  // Scroll progress across the curve region.
+  const { scrollYProgress } = useScroll({
+    target: containerRef,
+    offset: ["start 0.72", "end 0.82"],
+  });
+  const draw = useSpring(scrollYProgress, {
+    stiffness: 90,
+    damping: 26,
+    restDelta: 0.0005,
+  });
+
+  // Node that rides the curve.
+  const nodeX = useMotionValue(0);
+  const nodeY = useMotionValue(0);
+
+  // Measure card centers and rebuild the curve.
+  const measure = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    const isNarrow = w < 768;
+    const leftX = isNarrow ? w * 0.5 : w * 0.28;
+    const rightX = isNarrow ? w * 0.5 : w * 0.72;
+
+    const anchors: Point[] = [];
+    cardRefs.current.forEach((card, i) => {
+      if (!card) return;
+      const y = card.offsetTop + card.offsetHeight / 2;
+      const x = isNarrow ? w * 0.5 : i % 2 === 0 ? leftX : rightX;
+      anchors.push({ x, y });
+    });
+
+    const points: Point[] = [
+      { x: w * 0.5, y: 0 },
+      ...anchors,
+      { x: w * 0.5, y: h },
+    ];
+
+    anchorsRef.current = anchors;
+    setSize({ w, h });
+    setPathD(buildSmoothPath(points));
+  }, []);
+
+  useLayoutEffect(() => {
+    measure();
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [measure]);
+
+  // After the path is laid out, find each card's position along it (0–1).
+  useLayoutEffect(() => {
+    const path = pathRef.current;
+    if (!path || !pathD) return;
+    const total = path.getTotalLength();
+    totalLenRef.current = total;
+
+    const anchors = anchorsRef.current;
+    const best = anchors.map(() => ({ dist: Infinity, len: 0 }));
+    const samples = 600;
+    for (let s = 0; s <= samples; s++) {
+      const len = (s / samples) * total;
+      const pt = path.getPointAtLength(len);
+      anchors.forEach((a, idx) => {
+        const dx = pt.x - a.x;
+        const dy = pt.y - a.y;
+        const dist = dx * dx + dy * dy;
+        if (dist < best[idx].dist) best[idx] = { dist, len };
+      });
+    }
+    setFractions(best.map((b) => b.len / total));
+    // Seed the node at the start.
+    const start = path.getPointAtLength(0);
+    nodeX.set(start.x);
+    nodeY.set(start.y);
+  }, [pathD, nodeX, nodeY]);
+
+  // Drive node position + card lighting from scroll progress.
+  useMotionValueEvent(draw, "change", (v) => {
+    const path = pathRef.current;
+    const total = totalLenRef.current;
+    if (path && total) {
+      const clamped = Math.min(Math.max(v, 0), 1);
+      const pt = path.getPointAtLength(total * clamped);
+      nodeX.set(pt.x);
+      nodeY.set(pt.y);
+    }
+    if (fractions.length) {
+      let changed = false;
+      const next = fractions.map((f, i) => {
+        const isLit = v >= f - 0.012;
+        if (isLit !== lit[i]) changed = true;
+        return isLit;
+      });
+      if (changed) setLit(next);
+    }
+  });
+
+  return (
+    <section
+      ref={forwardedRef}
+      className="relative px-4 pb-4 pt-10 sm:px-6 lg:px-8"
+    >
+      <div className="mx-auto max-w-5xl">
+        <SpineHeading />
+
+        {/* Curve region — SVG overlay sits behind the cards */}
+        <div ref={containerRef} className="relative mt-14">
+          <svg
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 z-0 h-full w-full"
+            width={size.w}
+            height={size.h}
+            viewBox={`0 0 ${size.w || 1} ${size.h || 1}`}
+            fill="none"
+          >
+            {/* Static track */}
+            <path
+              d={pathD}
+              stroke="rgba(23,44,71,0.13)"
+              strokeWidth={2}
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+            {/* Drawn curve, revealed on scroll */}
+            <motion.path
+              ref={pathRef}
+              d={pathD}
+              stroke="var(--ink)"
+              strokeWidth={2.4}
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+              style={{ pathLength: draw }}
+            />
+            {/* Anchor dots under each card */}
+            {anchorsRef.current.map((a, i) => (
+              <circle
+                key={i}
+                cx={a.x}
+                cy={a.y}
+                r={lit[i] ? 5 : 3.5}
+                fill={lit[i] ? "var(--ink)" : "#ffffff"}
+                stroke="var(--ink)"
+                strokeWidth={1.4}
+                vectorEffect="non-scaling-stroke"
+                style={{ transition: "r 0.3s ease, fill 0.3s ease" }}
+              />
+            ))}
+            {/* Traveling node */}
+            <motion.circle
+              cx={nodeX}
+              cy={nodeY}
+              r={7}
+              fill="var(--ink)"
+              opacity={0.16}
+            />
+            <motion.circle cx={nodeX} cy={nodeY} r={3.5} fill="var(--ink)" />
+          </svg>
+
+          {/* Cards */}
+          <div className="relative z-10">
+            {radarTopics.map((topic, index) => (
+              <StoryRow
+                key={topic.id}
+                ref={(el) => {
+                  cardRefs.current[index] = el;
+                }}
+                topic={topic}
+                index={index}
+                lit={lit[index] ?? false}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Terminal node into the prompt */}
+        <div
+          aria-hidden="true"
+          className="relative z-10 mx-auto mt-2 flex h-10 w-10 items-center justify-center"
+        >
+          <span className="absolute h-3 w-3 rounded-full bg-[var(--ink)]" />
+          <span className="absolute h-10 w-10 rounded-full border border-[var(--ink)] opacity-20" />
+        </div>
+
+        <PromptModule />
+      </div>
+    </section>
+  );
+});
 
 function SpineHeading() {
   return (
@@ -182,92 +361,62 @@ function SpineHeading() {
       <p className="eyebrow">Live narrative radar</p>
       <h2 className="section-title mt-5">Breaking into the conversation</h2>
       <p className="section-copy mx-auto mt-4">
-        Each story sits on the thread. Follow it down to where you can start your
-        own investigation.
+        The thread runs under each story, lighting it up in turn — then ends where
+        you can start your own investigation.
       </p>
     </div>
   );
 }
 
-function TravelingNode({ progress }: { progress: MotionValue<number> }) {
-  const top = useTransform(progress, [0, 1], ["0%", "100%"]);
-  const opacity = useTransform(progress, [0, 0.02, 0.98, 1], [0, 1, 1, 0]);
+/* ── Story row: a card the curve passes beneath ── */
 
-  return (
-    <motion.div
-      aria-hidden="true"
-      className="absolute left-1/2 z-20 -translate-x-1/2"
-      style={{ top, opacity }}
-    >
-      <span className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--ink)]" />
-      <motion.span
-        className="absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--ink)]"
-        animate={{ opacity: [0.18, 0, 0.18], scale: [0.8, 1.6, 0.8] }}
-        transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
-      />
-    </motion.div>
-  );
-}
-
-/* ════════════════════════════════════════════════════════════
-   STORY ROW — a "square" on the line that lights up on pass
-════════════════════════════════════════════════════════════ */
-
-function StoryRow({ topic, index }: { topic: RadarTopic; index: number }) {
+const StoryRow = forwardRef<
+  HTMLDivElement,
+  { topic: RadarTopic; index: number; lit: boolean }
+>(function StoryRow({ topic, index, lit }, ref) {
   const navigate = useNavigate();
   const isLeft = index % 2 === 0;
   const label = String(index + 1).padStart(2, "0");
 
   return (
-    <motion.div
-      initial="dim"
-      whileInView="lit"
-      viewport={{ once: false, amount: 0.7, margin: "0px 0px -20% 0px" }}
-      className="relative grid grid-cols-1 items-center gap-y-6 py-8 md:grid-cols-2 md:gap-x-20"
-    >
-      {/* Node where the card meets the line */}
-      <motion.span
-        aria-hidden="true"
-        variants={{
-          dim: { scale: 0.6, backgroundColor: "rgba(255,255,255,1)" },
-          lit: { scale: 1, backgroundColor: "rgb(19,35,58)" },
-        }}
-        transition={{ duration: 0.4, ease: "easeOut" }}
-        className="absolute left-1/2 top-1/2 z-10 hidden h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[var(--ink)] md:block"
-      />
-
-      {/* Card — placed on alternating side; connector points to the line */}
+    <div className="grid grid-cols-1 py-10 md:grid-cols-2 md:gap-x-24 md:py-14">
       <div
-        className={
-          isLeft
-            ? "md:col-start-1 md:pr-6 md:text-right"
-            : "md:col-start-2 md:pl-6"
-        }
+        ref={ref}
+        className={isLeft ? "md:col-start-1" : "md:col-start-2"}
       >
-        <StoryCard topic={topic} label={label} alignRight={isLeft} navigate={navigate} />
+        <StoryCard
+          topic={topic}
+          label={label}
+          alignRight={isLeft}
+          lit={lit}
+          onClick={() => navigate(createInvestigationHref(topic.id))}
+        />
       </div>
-    </motion.div>
+    </div>
   );
-}
+});
 
 function StoryCard({
   topic,
   label,
   alignRight,
-  navigate,
+  lit,
+  onClick,
 }: {
   topic: RadarTopic;
   label: string;
   alignRight: boolean;
-  navigate: ReturnType<typeof useNavigate>;
+  lit: boolean;
+  onClick: () => void;
 }) {
   return (
     <motion.button
       type="button"
-      onClick={() => navigate(createInvestigationHref(topic.id))}
-      variants={{
-        dim: { opacity: 0.45, y: 18, borderColor: "rgba(23,44,71,0.12)" },
-        lit: { opacity: 1, y: 0, borderColor: "rgba(23,44,71,0.28)" },
+      onClick={onClick}
+      animate={{
+        opacity: lit ? 1 : 0.4,
+        y: lit ? 0 : 16,
+        borderColor: lit ? "rgba(23,44,71,0.28)" : "rgba(23,44,71,0.1)",
       }}
       transition={{ duration: 0.5, ease: EASE_OUT }}
       whileHover={{ y: -4 }}

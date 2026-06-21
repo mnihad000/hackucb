@@ -18,7 +18,7 @@ class TrendingRuntimeStore:
             try:
                 import redis as _redis_lib  # type: ignore[import]
 
-                client = _redis_lib.from_url(redis_url, decode_responses=True, socket_timeout=2)
+                client = _redis_lib.from_url(redis_url, decode_responses=True, socket_connect_timeout=10, socket_timeout=10)
                 client.ping()
                 self._redis = client
             except Exception:

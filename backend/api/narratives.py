@@ -1,5 +1,12 @@
+import logging
+import threading
 from fastapi import APIRouter, HTTPException, Query
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
+
+# Tracks investigation IDs currently running in background threads
+_running_investigations: set[str] = set()
 
 from agents.receipts_agent import build_receipts as build_receipts_agent
 from agents.claim_counterpoint_agent import build_claim_counterpoints
@@ -785,19 +792,45 @@ def run_investigation(
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Investigation plan for '{investigation_id}' not found.")
 
-    try:
-        workspace = _build_investigation_runner().run(
-            investigation_id=investigation_id,
-            plan=plan,
-            force_refresh=request.force_refresh,
-        )
-        if _investigation_cache:
-            _investigation_cache.invalidate(investigation_id)
+    workspace = _investigation_repo.get_investigation_workspace(investigation_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail=f"Investigation workspace for '{investigation_id}' not found.")
+
+    # Already complete — return cached result
+    if workspace.research_loop and not request.force_refresh:
         return workspace
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Research loop failed: {exc}") from exc
+
+    # Already running in background — return current state so frontend can keep polling
+    if investigation_id in _running_investigations and not request.force_refresh:
+        return workspace
+
+    # Launch research loop in a background thread so this endpoint returns immediately.
+    # The frontend polls GET /api/investigations/{id} every few seconds for updates.
+    def _run_bg() -> None:
+        _running_investigations.add(investigation_id)
+        try:
+            _build_investigation_runner().run(
+                investigation_id=investigation_id,
+                plan=plan,
+                force_refresh=request.force_refresh,
+            )
+            if _investigation_cache:
+                _investigation_cache.invalidate(investigation_id)
+            logger.info("Research loop completed for %s", investigation_id)
+        except Exception as exc:
+            logger.error("Research loop failed for %s: %s", investigation_id, exc)
+        finally:
+            _running_investigations.discard(investigation_id)
+
+    thread = threading.Thread(
+        target=_run_bg,
+        daemon=True,
+        name=f"rq-run-{investigation_id[:8]}",
+    )
+    thread.start()
+
+    # Return current workspace so the frontend has something to render immediately
+    return workspace
 
 
 # ---------------------------------------------------------------------------

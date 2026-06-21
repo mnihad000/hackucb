@@ -1,46 +1,10 @@
-import "@xyflow/react/dist/style.css";
-
-import {
-  ReactFlow,
-  type NodeMouseHandler,
-  type ReactFlowInstance,
-} from "@xyflow/react";
 import { motion } from "framer-motion";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import type { InvestigationFlowchartData } from "../../types/rhetoriq";
-import AnimatedInvestigationEdge from "./AnimatedInvestigationEdge";
 import InvestigationNodeCard from "./InvestigationNodeCard";
-import {
-  buildRevealPlan,
-  createFlowEdges,
-  createFlowNodes,
-  FLOW_NODE_HEIGHT,
-  FLOW_NODE_WIDTH,
-  getGraphViewportBounds,
-  getConnectedNeighborhood,
-  getNodePositions,
-  resolvePathToCurrent,
-  type InvestigationFlowEdge,
-  type InvestigationFlowNode,
-} from "./utils";
+import { buildTree, type TreeRow } from "./treeLayout";
 
-const edgeTypes = {
-  investigationEdge: AnimatedInvestigationEdge,
-};
-
-const nodeTypes = {
-  investigationNode: InvestigationNodeCard,
-};
-
-const CURRENT_NODE_MS = 820;
-const EDGE_MAIN_MS = 1380;
-const EDGE_BRANCH_MS = 1040;
-const EDGE_CONNECTOR_MS = 760;
-const NODE_MAIN_MS = 780;
-const NODE_BRANCH_MS = 660;
-const PAUSE_MAIN_MS = 340;
-const PAUSE_BRANCH_MS = 240;
-const FINAL_FRAME_MS = 1120;
+const EASE_OUT = [0.16, 1, 0.3, 1] as const;
 
 type InvestigationFlowchartProps = {
   data?: InvestigationFlowchartData;
@@ -51,560 +15,194 @@ export default function InvestigationFlowchart({
   data,
   isLoading = false,
 }: InvestigationFlowchartProps) {
-  const animationController = useRef<{
-    runId: number;
-    timeoutIds: Set<number>;
-  }>({
-    runId: 0,
-    timeoutIds: new Set<number>(),
-  });
-  const [focusMode, setFocusMode] = useState(false);
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  const [isIntroRunning, setIsIntroRunning] = useState(false);
-  const [revealedEdgeIds, setRevealedEdgeIds] = useState<string[]>([]);
-  const [revealedNodeIds, setRevealedNodeIds] = useState<string[]>([]);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
-    data?.currentNodeId ?? null,
-  );
-  const flowRef = useRef<ReactFlowInstance<
-    InvestigationFlowNode,
-    InvestigationFlowEdge
-  > | null>(null);
-
-  const visibleData = data ?? null;
-  const hasGraphData = Boolean(visibleData && visibleData.nodes.length > 0);
-  const positions = useMemo(
-    () => (visibleData ? getNodePositions(visibleData) : {}),
-    [visibleData],
-  );
-  const viewportBounds = useMemo(
-    () =>
-      visibleData
-        ? getGraphViewportBounds(visibleData)
-        : { minX: 0, minY: 0, maxX: 1400, maxY: 2200 },
-    [visibleData],
-  );
-  const revealPlan = useMemo(
-    () => (visibleData ? buildRevealPlan(visibleData) : { phases: [] }),
-    [visibleData],
-  );
-  const revealDirections = useMemo(() => {
-    const next = new Map<string, "forward" | "reverse">();
-
-    for (const phase of revealPlan.phases) {
-      for (const step of phase.steps) {
-        if (step.kind === "edge") {
-          next.set(step.id, step.direction);
-        }
-      }
-    }
-
-    return next;
-  }, [revealPlan]);
-  const revealDurations = useMemo(() => {
-    const next = new Map<string, number>();
-
-    for (const phase of revealPlan.phases) {
-      phase.steps.forEach((step, index) => {
-        if (step.kind !== "edge") {
-          return;
-        }
-
-        const followingStep = phase.steps[index + 1];
-        const hasNodeImmediatelyAfter =
-          followingStep?.kind === "node" && followingStep.id === step.cameraNodeId;
-        const duration =
-          phase.id === "main"
-            ? EDGE_MAIN_MS
-            : hasNodeImmediatelyAfter
-              ? EDGE_BRANCH_MS
-              : EDGE_CONNECTOR_MS;
-
-        next.set(step.id, duration);
-      });
-    }
-
-    return next;
-  }, [revealPlan]);
-
-  useEffect(() => {
-    if (!visibleData) {
-      setSelectedNodeId(null);
-      setFocusMode(false);
-      return;
-    }
-
-    if (!visibleData.nodes.some((node) => node.id === selectedNodeId)) {
-      setSelectedNodeId(visibleData.currentNodeId);
-      setFocusMode(false);
-    }
-  }, [selectedNodeId, visibleData]);
-
-  const focusNode = useCallback(
-    (nodeId: string, zoom = 1.12, duration = 750) => {
-      const position = positions[nodeId];
-
-      if (!position || !flowRef.current) {
-        return;
-      }
-
-      void flowRef.current.setCenter(
-        position.x + FLOW_NODE_WIDTH / 2,
-        position.y + FLOW_NODE_HEIGHT / 2,
-        { duration, zoom },
-      );
-    },
-    [positions],
+  const rows = useMemo<TreeRow[]>(
+    () => (data && data.nodes.length > 0 ? buildTree(data) : []),
+    [data],
   );
 
-  const framePair = useCallback(
-    (anchorNodeId: string, nodeId: string, duration = 720) => {
-      const anchor = positions[anchorNodeId];
-      const node = positions[nodeId];
-
-      if (!anchor || !node || !flowRef.current) {
-        return;
-      }
-
-      const anchorCenterX = anchor.x + FLOW_NODE_WIDTH / 2;
-      const anchorCenterY = anchor.y + FLOW_NODE_HEIGHT / 2;
-      const nodeCenterX = node.x + FLOW_NODE_WIDTH / 2;
-      const nodeCenterY = node.y + FLOW_NODE_HEIGHT / 2;
-      const centerX = (anchorCenterX + nodeCenterX) / 2;
-      const centerY = (anchorCenterY + nodeCenterY) / 2;
-      const spanX = Math.abs(anchorCenterX - nodeCenterX);
-      const spanY = Math.abs(anchorCenterY - nodeCenterY);
-      const zoom = Math.max(
-        0.82,
-        Math.min(1.16, 1.18 - spanX / 2300 - spanY / 1800),
-      );
-
-      void flowRef.current.setCenter(centerX, centerY, { duration, zoom });
-    },
-    [positions],
-  );
-
-  const clearScheduledAnimation = useCallback(() => {
-    for (const timeoutId of animationController.current.timeoutIds) {
-      window.clearTimeout(timeoutId);
-    }
-
-    animationController.current.timeoutIds.clear();
-  }, []);
-
-  const revealAllVisibleGraph = useCallback(() => {
-    if (!visibleData) {
-      return;
-    }
-
-    setRevealedNodeIds(visibleData.nodes.map((node) => node.id));
-    setRevealedEdgeIds(visibleData.edges.map((edge) => edge.id));
-  }, [visibleData]);
-
-  const stopIntro = useCallback(
-    ({ revealAll = false }: { revealAll?: boolean } = {}) => {
-      animationController.current.runId += 1;
-      clearScheduledAnimation();
-      setIsIntroRunning(false);
-
-      if (revealAll) {
-        revealAllVisibleGraph();
-      }
-    },
-    [clearScheduledAnimation, revealAllVisibleGraph],
-  );
-
-  const waitFor = useCallback(
-    (ms: number, runId: number) =>
-      new Promise<boolean>((resolve) => {
-        if (animationController.current.runId !== runId) {
-          resolve(false);
-          return;
-        }
-
-        const timeoutId = window.setTimeout(() => {
-          animationController.current.timeoutIds.delete(timeoutId);
-          resolve(animationController.current.runId === runId);
-        }, ms);
-
-        animationController.current.timeoutIds.add(timeoutId);
-      }),
-    [],
-  );
-
-  const startReveal = useCallback(() => {
-    if (!visibleData) {
-      return;
-    }
-
-    stopIntro();
-    const runId = animationController.current.runId;
-    setIsIntroRunning(true);
-    setRevealedEdgeIds([]);
-    setRevealedNodeIds([]);
-
-    const revealNode = (nodeId: string) => {
-      setRevealedNodeIds((current) =>
-        current.includes(nodeId) ? current : [...current, nodeId],
-      );
-    };
-
-    const revealEdge = (edgeId: string) => {
-      setRevealedEdgeIds((current) =>
-        current.includes(edgeId) ? current : [...current, edgeId],
-      );
-    };
-
-    void (async () => {
-      for (const phase of revealPlan.phases) {
-        for (let index = 0; index < phase.steps.length; index += 1) {
-          if (animationController.current.runId !== runId) {
-            return;
-          }
-
-          const step = phase.steps[index];
-          const nextStep = phase.steps[index + 1];
-
-          if (step.kind === "node") {
-            if (phase.id === "current") {
-              focusNode(step.id, 1.12, 980);
-            } else {
-              framePair(step.cameraAnchorId, step.cameraNodeId, 980);
-            }
-
-            revealNode(step.id);
-
-            const settled = await waitFor(
-              phase.id === "current" ? CURRENT_NODE_MS : phase.id === "main" ? NODE_MAIN_MS : NODE_BRANCH_MS,
-              runId,
-            );
-
-            if (!settled) {
-              return;
-            }
-
-            const paused = await waitFor(
-              phase.id === "main" ? PAUSE_MAIN_MS : PAUSE_BRANCH_MS,
-              runId,
-            );
-
-            if (!paused) {
-              return;
-            }
-
-            continue;
-          }
-
-          framePair(step.cameraAnchorId, step.cameraNodeId, 1180);
-          revealEdge(step.id);
-
-          const hasNodeImmediatelyAfter =
-            nextStep?.kind === "node" && nextStep.id === step.cameraNodeId;
-          const edgeDuration =
-            phase.id === "main"
-              ? EDGE_MAIN_MS
-              : hasNodeImmediatelyAfter
-                ? EDGE_BRANCH_MS
-                : EDGE_CONNECTOR_MS;
-          const completed = await waitFor(edgeDuration, runId);
-
-          if (!completed) {
-            return;
-          }
-        }
-      }
-
-      if (animationController.current.runId !== runId) {
-        return;
-      }
-
-      await waitFor(240, runId);
-
-      if (animationController.current.runId !== runId) {
-        return;
-      }
-
-      void flowRef.current?.fitView({
-        duration: FINAL_FRAME_MS,
-        maxZoom: 1.02,
-        minZoom: 0.56,
-        padding: 0.24,
-      });
-
-      const finished = await waitFor(FINAL_FRAME_MS, runId);
-
-      if (!finished) {
-        return;
-      }
-
-      setIsIntroRunning(false);
-    })();
-  }, [focusNode, framePair, revealPlan.phases, stopIntro, visibleData, waitFor]);
-
-  useEffect(() => {
-    if (!hasGraphData || isLoading) {
-      stopIntro();
-      setRevealedEdgeIds([]);
-      setRevealedNodeIds([]);
-      return;
-    }
-
-    startReveal();
-
-    return () => {
-      animationController.current.runId += 1;
-      clearScheduledAnimation();
-    };
-  }, [clearScheduledAnimation, hasGraphData, isLoading, startReveal, stopIntro]);
-
-  const highlightedPath = useMemo(() => {
-    if (!visibleData || !focusMode || !selectedNodeId) {
-      return { edgeIds: new Set<string>(), nodeIds: new Set<string>() };
-    }
-
-    const resolved = resolvePathToCurrent(visibleData, selectedNodeId);
-
-    if (resolved.found) {
-      return resolved;
-    }
-
-    return getConnectedNeighborhood(visibleData, selectedNodeId);
-  }, [focusMode, selectedNodeId, visibleData]);
-
-  const hoverNeighborhood = useMemo(() => {
-    if (!visibleData || !hoveredNodeId || focusMode) {
-      return { edgeIds: new Set<string>(), nodeIds: new Set<string>() };
-    }
-
-    return getConnectedNeighborhood(visibleData, hoveredNodeId);
-  }, [focusMode, hoveredNodeId, visibleData]);
-
-  const highlightedNodeIds = useMemo(() => {
-    const next = new Set<string>();
-
-    for (const nodeId of highlightedPath.nodeIds) {
-      next.add(nodeId);
-    }
-
-    for (const nodeId of hoverNeighborhood.nodeIds) {
-      next.add(nodeId);
-    }
-
-    return next;
-  }, [highlightedPath.nodeIds, hoverNeighborhood.nodeIds]);
-
-  const highlightedEdgeIds = useMemo(() => {
-    const next = new Set<string>();
-
-    for (const edgeId of highlightedPath.edgeIds) {
-      next.add(edgeId);
-    }
-
-    for (const edgeId of hoverNeighborhood.edgeIds) {
-      next.add(edgeId);
-    }
-
-    return next;
-  }, [highlightedPath.edgeIds, hoverNeighborhood.edgeIds]);
-
-  const dimmedNodeIds = useMemo(() => {
-    if (!visibleData || !focusMode || highlightedPath.nodeIds.size === 0) {
-      return new Set<string>();
-    }
-
-    return new Set(
-      visibleData.nodes
-        .map((node) => node.id)
-        .filter((nodeId) => !highlightedPath.nodeIds.has(nodeId)),
-    );
-  }, [focusMode, highlightedPath.nodeIds, visibleData]);
-
-  const revealedNodeIdSet = useMemo(
-    () => new Set(revealedNodeIds),
-    [revealedNodeIds],
-  );
-  const revealedEdgeIdSet = useMemo(
-    () => new Set(revealedEdgeIds),
-    [revealedEdgeIds],
-  );
-
-  const nodes = useMemo(
-    () =>
-      visibleData
-        ? createFlowNodes({
-            data: visibleData,
-            dimmedNodeIds,
-            highlightedNodeIds,
-            isFocusMode: focusMode,
-            positions,
-            revealedNodeIds: revealedNodeIdSet,
-            selectedNodeId,
-            showReceipts: false,
-          })
-        : [],
-    [
-      dimmedNodeIds,
-      focusMode,
-      highlightedNodeIds,
-      positions,
-      revealedNodeIdSet,
-      selectedNodeId,
-      visibleData,
-    ],
-  );
-
-  const edges = useMemo(
-    () =>
-      visibleData
-        ? createFlowEdges({
-            data: visibleData,
-            dimmedNodeIds,
-            highlightedEdgeIds,
-            isFocusMode: focusMode,
-            revealDirections,
-            revealDurations,
-            revealedEdgeIds: revealedEdgeIdSet,
-          })
-        : [],
-    [
-      dimmedNodeIds,
-      focusMode,
-      highlightedEdgeIds,
-      revealDirections,
-      revealDurations,
-      revealedEdgeIdSet,
-      visibleData,
-    ],
-  );
-
-  const handleNodeClick: NodeMouseHandler<InvestigationFlowNode> = useCallback(
-    (_event, node) => {
-      if (!visibleData) {
-        return;
-      }
-
-      if (isIntroRunning) {
-        stopIntro({ revealAll: true });
-      }
-
-      setSelectedNodeId(node.id);
-      setFocusMode(true);
-      focusNode(node.id, node.id === visibleData.currentNodeId ? 1.03 : 1.1, 760);
-    },
-    [focusNode, isIntroRunning, stopIntro, visibleData],
+  const hasGraphData = rows.length > 0;
+  // Re-key on the shape of the tree so the reveal animation replays on new data.
+  const treeKey = useMemo(
+    () => (data ? `${data.currentNodeId}:${data.nodes.length}:${data.edges.length}` : "empty"),
+    [data],
   );
 
   return (
     <section>
-      <div className="flowchart-canvas relative overflow-hidden rounded-[1.3rem] border border-[rgba(12,12,12,0.12)] bg-[rgba(255,255,252,0.96)] shadow-[0_32px_66px_-44px_rgba(0,0,0,0.18)] backdrop-blur-xl">
-        <StructuredBackdrop />
+      <div className="relative overflow-hidden rounded-[1.4rem] border border-[var(--border)] bg-[rgba(255,255,255,0.7)] shadow-[0_32px_70px_-48px_rgba(19,35,58,0.4)] backdrop-blur-xl">
+        {/* header */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] bg-white/55 px-6 py-4">
+          <div>
+            <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-[var(--muted)]">
+              Narrative provenance
+            </p>
+            <p className="mt-1 text-sm font-medium text-[var(--ink)]">
+              Origin to current state · click any article to open the source
+            </p>
+          </div>
+          <div className="flex items-center gap-3 text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+            <LegendDot color="var(--accent)" label="Timeline" />
+            <LegendDot color="#b06a5b" label="Counter-frame" />
+          </div>
+        </div>
 
-        <div className="relative h-[820px] sm:h-[920px] xl:h-[980px]">
+        {/* contained, vertically-scrolling tree — never overflows horizontally */}
+        <div className="relative h-[560px] overflow-y-auto overflow-x-hidden px-5 py-7 sm:h-[640px] sm:px-7 [scrollbar-color:rgba(23,44,71,0.18)_transparent] [scrollbar-width:thin]">
           {hasGraphData ? (
-            <ReactFlow<InvestigationFlowNode, InvestigationFlowEdge>
-              aria-label="Narrative path map"
-              className="!bg-transparent"
-              defaultEdgeOptions={{ selectable: false }}
-              edges={edges}
-              edgeTypes={edgeTypes}
-              elementsSelectable={false}
-              maxZoom={1.45}
-              minZoom={0.5}
-              nodeTypes={nodeTypes}
-              nodes={nodes}
-              nodesConnectable={false}
-              nodesDraggable={false}
-              nodeExtent={[
-                [viewportBounds.minX, viewportBounds.minY],
-                [viewportBounds.maxX, viewportBounds.maxY],
-              ]}
-              onInit={(instance) => {
-                flowRef.current = instance;
+            <motion.div
+              key={treeKey}
+              animate="show"
+              className="mx-auto flex max-w-2xl flex-col"
+              initial="hidden"
+              variants={{
+                hidden: {},
+                show: { transition: { staggerChildren: 0.12, delayChildren: 0.05 } },
               }}
-              onNodeClick={handleNodeClick}
-              onNodeMouseEnter={(_event, node) => setHoveredNodeId(node.id)}
-              onNodeMouseLeave={() => setHoveredNodeId(null)}
-              onMoveStart={(event) => {
-                if (event && isIntroRunning) {
-                  stopIntro({ revealAll: true });
-                }
-              }}
-              onPaneClick={() => {
-                if (isIntroRunning) {
-                  stopIntro({ revealAll: true });
-                }
-
-                setHoveredNodeId(null);
-              }}
-              onPaneScroll={() => {
-                if (isIntroRunning) {
-                  stopIntro({ revealAll: true });
-                }
-              }}
-              panOnDrag
-              panOnScroll
-              proOptions={{ hideAttribution: true }}
-              translateExtent={[
-                [viewportBounds.minX, viewportBounds.minY],
-                [viewportBounds.maxX, viewportBounds.maxY],
-              ]}
-              zoomOnDoubleClick={false}
-            />
+            >
+              {rows.map((row, index) => (
+                <TreeRowBlock key={row.node.id} row={row} isLast={index === rows.length - 1} />
+              ))}
+            </motion.div>
           ) : null}
 
-          {isLoading ? <WaitingTraceOverlay /> : null}
+          {!hasGraphData && isLoading ? <WaitingTraceOverlay /> : null}
+          {!hasGraphData && !isLoading ? <EmptyState /> : null}
         </div>
       </div>
     </section>
   );
 }
 
-function StructuredBackdrop() {
+function TreeRowBlock({ row, isLast }: { row: TreeRow; isLast: boolean }) {
+  const kind = row.isCurrent ? "current" : "trunk";
+
   return (
-    <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
-      <div className="absolute inset-x-6 bottom-8 top-6 rounded-[1rem] border border-[rgba(12,12,12,0.08)] bg-[linear-gradient(180deg,rgba(255,255,252,0.98),rgba(248,248,245,0.94))]" />
-      <div className="absolute inset-x-6 top-6 h-12 border-b border-[rgba(12,12,12,0.08)]" />
-      <div className="absolute inset-x-6 bottom-8 h-12 border-t border-[rgba(12,12,12,0.08)]" />
-      <div className="absolute bottom-8 left-1/2 top-6 w-px -translate-x-1/2 bg-[linear-gradient(180deg,rgba(12,12,12,0.12),rgba(12,12,12,0.04))]" />
-      <div className="absolute bottom-8 left-[29%] top-6 w-px bg-[linear-gradient(180deg,rgba(12,12,12,0.08),rgba(12,12,12,0.02))]" />
-      <div className="absolute bottom-8 right-[29%] top-6 w-px bg-[linear-gradient(180deg,rgba(12,12,12,0.08),rgba(12,12,12,0.02))]" />
-      <div className="absolute inset-x-6 top-[15rem] h-px bg-[rgba(12,12,12,0.06)]" />
-      <div className="absolute inset-x-6 top-[28rem] h-px bg-[rgba(12,12,12,0.05)]" />
-      <div className="absolute inset-x-6 top-[41rem] h-px bg-[rgba(12,12,12,0.04)]" />
+    <motion.div
+      className="relative flex gap-4 sm:gap-5"
+      variants={{
+        hidden: { opacity: 0, y: 18 },
+        show: { opacity: 1, y: 0, transition: { duration: 0.55, ease: EASE_OUT } },
+      }}
+    >
+      {/* rail: continuous spine + node marker */}
+      <div className="relative flex w-7 flex-col items-center">
+        {/* line above the dot (hidden on the origin row) */}
+        <span
+          aria-hidden="true"
+          className={`w-px flex-none ${row.isOrigin ? "h-0" : "h-6"}`}
+          style={{ backgroundColor: "rgba(23,44,71,0.16)" }}
+        />
+        <span
+          aria-hidden="true"
+          className="relative z-10 my-1 grid h-3.5 w-3.5 place-items-center rounded-full"
+          style={{
+            backgroundColor: row.isCurrent ? "var(--ink)" : "white",
+            border: `2px solid ${row.isCurrent ? "var(--ink)" : "var(--accent)"}`,
+          }}
+        >
+          {row.isCurrent ? (
+            <span className="h-1.5 w-1.5 rounded-full bg-white" />
+          ) : (
+            <span className="h-1 w-1 rounded-full bg-[var(--accent)]" />
+          )}
+        </span>
+        {/* line below the dot fills the rest of the row (hidden on the last row) */}
+        {!isLast ? (
+          <span
+            aria-hidden="true"
+            className="w-px flex-1"
+            style={{ backgroundColor: "rgba(23,44,71,0.16)" }}
+          />
+        ) : null}
+      </div>
+
+      {/* content: trunk article + nested branch articles */}
+      <div className={`min-w-0 flex-1 ${isLast ? "pb-2" : "pb-7"}`}>
+        {row.isOrigin ? (
+          <p className="mb-2 text-[0.6rem] font-semibold uppercase tracking-[0.24em] text-[var(--accent)]">
+            Earliest appearance in our dataset
+          </p>
+        ) : null}
+
+        <InvestigationNodeCard node={row.node} kind={kind} />
+
+        {row.branches.length > 0 ? (
+          <div className="mt-3 space-y-3 pl-5">
+            {row.branches.map((branch) => (
+              <div key={branch.node.id} className="relative">
+                {/* elbow connector from trunk card down into the branch */}
+                <span
+                  aria-hidden="true"
+                  className="absolute -left-5 top-0 h-6 w-px"
+                  style={{ backgroundColor: "rgba(23,44,71,0.14)" }}
+                />
+                <span
+                  aria-hidden="true"
+                  className="absolute -left-5 top-6 h-px w-5"
+                  style={{ backgroundColor: "rgba(23,44,71,0.14)" }}
+                />
+                <InvestigationNodeCard node={branch.node} kind={branch.variant} />
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </motion.div>
+  );
+}
+
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+      {label}
+    </span>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="flex h-full items-center justify-center px-6 text-center">
+      <p className="max-w-sm text-sm leading-6 text-[var(--muted)]">
+        The narrative tree will appear here once the investigation has gathered timeline
+        evidence.
+      </p>
     </div>
   );
 }
 
 function WaitingTraceOverlay() {
   return (
-    <div className="pointer-events-none absolute inset-0 z-[4] flex items-center justify-center">
-      <div className="relative h-full w-full">
-        <motion.div
-          animate={{ opacity: [0.14, 0.3, 0.14] }}
-          className="absolute left-1/2 top-[18%] h-[52%] w-px -translate-x-1/2 bg-[linear-gradient(180deg,rgba(0,0,0,0.12),rgba(0,0,0,0.44),rgba(0,0,0,0.1))]"
-          transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
-        />
-        <motion.div
-          animate={{ scaleX: [0.3, 1, 0.3], opacity: [0.08, 0.26, 0.08] }}
-          className="absolute left-1/2 top-[32%] h-px w-[22rem] origin-center -translate-x-1/2 bg-[linear-gradient(90deg,rgba(0,0,0,0.02),rgba(0,0,0,0.4),rgba(0,0,0,0.02))]"
-          transition={{ duration: 2.2, repeat: Infinity, ease: [0.16, 1, 0.3, 1] }}
-        />
-        <motion.div
-          animate={{ scaleX: [0.2, 1, 0.2], opacity: [0.06, 0.24, 0.06] }}
-          className="absolute left-1/2 top-[48%] h-px w-[30rem] origin-center -translate-x-1/2 bg-[linear-gradient(90deg,rgba(0,0,0,0.02),rgba(0,0,0,0.35),rgba(0,0,0,0.02))]"
-          transition={{ duration: 2.8, repeat: Infinity, ease: [0.16, 1, 0.3, 1], delay: 0.35 }}
-        />
-        <motion.div
-          animate={{ y: ["0%", "88%", "0%"], opacity: [0, 1, 0] }}
-          className="absolute left-1/2 top-[18%] h-6 w-6 -translate-x-1/2 rounded-full border border-[rgba(0,0,0,0.28)] bg-[rgba(255,255,252,0.94)] shadow-[0_10px_28px_-18px_rgba(0,0,0,0.34)]"
-          transition={{ duration: 2.9, repeat: Infinity, ease: [0.25, 0.1, 0.25, 1] }}
-        />
-        <div className="absolute bottom-10 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 text-center">
-          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-[rgba(15,15,15,0.56)]">
-            Tracing narrative branches
+    <div className="flex h-full items-center justify-center">
+      <div className="relative flex w-full max-w-md flex-col items-center">
+        {/* drawing spine */}
+        <div className="relative h-48 w-px overflow-hidden bg-[rgba(23,44,71,0.1)]">
+          <motion.div
+            animate={{ y: ["-100%", "100%"] }}
+            className="absolute inset-x-[-1px] h-20 bg-[linear-gradient(180deg,transparent,rgba(124,144,172,0.9),transparent)]"
+            transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+          />
+        </div>
+        {[0, 1, 2].map((index) => (
+          <motion.span
+            key={index}
+            animate={{ scale: [0.6, 1, 0.6], opacity: [0.3, 1, 0.3] }}
+            className="absolute h-3 w-3 rounded-full border-2 border-[var(--accent)] bg-white"
+            style={{ top: `${22 + index * 30}%` }}
+            transition={{
+              duration: 1.8,
+              repeat: Infinity,
+              ease: "easeInOut",
+              delay: index * 0.25,
+            }}
+          />
+        ))}
+        <div className="mt-8 flex flex-col items-center gap-2 text-center">
+          <p className="text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-[var(--muted)]">
+            Tracing narrative origin
           </p>
-          <p className="max-w-md text-sm leading-6 text-[rgba(15,15,15,0.52)]">
-            Holding the tree open while evidence resolves.
+          <p className="max-w-xs text-sm leading-6 text-[var(--muted)]">
+            Building the provenance tree as evidence resolves.
           </p>
         </div>
       </div>

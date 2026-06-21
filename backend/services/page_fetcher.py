@@ -9,10 +9,20 @@ from models.investigation import FetchFailure, RawPage
 
 
 class HttpPageFetcher:
-    def __init__(self) -> None:
+    def __init__(self, cache=None) -> None:
         self._settings = get_settings()
+        self._cache = cache  # optional TrendingRedisCache
 
     def fetch(self, url: str) -> RawPage | FetchFailure:
+        # Cache hit — skip the network entirely
+        if self._cache is not None:
+            cached = self._cache.get_page(url)
+            if cached:
+                try:
+                    return RawPage(**cached)
+                except Exception:
+                    pass  # malformed cache entry → fall through to live fetch
+
         headers = {
             "User-Agent": "RhetoriQ/0.1 (+investigation retriever)",
             "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
@@ -48,7 +58,7 @@ class HttpPageFetcher:
                 retryable=False,
             )
 
-        return RawPage(
+        page = RawPage(
             url=url,
             final_url=str(response.url),
             status_code=response.status_code,
@@ -56,3 +66,9 @@ class HttpPageFetcher:
             html=response.text,
             fetched_at=datetime.now(timezone.utc),
         )
+
+        # Store in Redis for future runs (TTL managed by cache layer)
+        if self._cache is not None:
+            self._cache.set_page(url, page.model_dump(mode="json"))
+
+        return page

@@ -58,9 +58,10 @@ class DiscoveryAgent:
         search_provider: MultiSearchProvider | None = None,
         page_fetcher: HttpPageFetcher | None = None,
         normalizer: DocumentNormalizer | None = None,
+        cache=None,
     ) -> None:
-        self._provider = search_provider or MultiSearchProvider()
-        self._fetcher = page_fetcher or HttpPageFetcher()
+        self._provider = search_provider or MultiSearchProvider(cache=cache)
+        self._fetcher = page_fetcher or HttpPageFetcher(cache=cache)
         self._normalizer = normalizer or DocumentNormalizer()
 
     def build_queries(

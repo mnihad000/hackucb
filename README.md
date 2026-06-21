@@ -15,3 +15,7 @@ Useful endpoints:
 - `GET /api/investigations/{id}/memory`
 - `GET /api/investigations/{id}/similar-claims`
 - `GET /api/investigations/{id}/related-articles`
+
+## Sponsor Integration Docs
+
+Sponsor-specific implementation notes live in `docs/sponsors/`. They explain how Redis, Browserbase, Arize, Band, and the runtime model layer fit RhetoriQ's narrative chain-of-custody problem statement.

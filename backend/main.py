@@ -40,12 +40,36 @@ app.include_router(trending_router)
 
 @app.on_event("startup")
 def startup() -> None:
+    import logging
+    import threading
+    import time
+
     from services.arize_tracer import init_arize_tracing
     init_arize_tracing()
 
     if settings.DEMO_MODE:
         return
+
+    # Warm the feed immediately on startup (runs in background thread)
     trending_service.ensure_warm_async()
+
+    # Hourly refresh loop — keeps the feed fresh without waiting for a user request
+    def _hourly_refresh() -> None:
+        logger = logging.getLogger("rq.trending.scheduler")
+        while True:
+            time.sleep(3600)  # 1 hour
+            try:
+                logger.info("Hourly trending refresh starting")
+                trending_service.refresh_now(is_reseed=False)
+                logger.info("Hourly trending refresh complete")
+            except Exception as exc:
+                logger.error("Hourly trending refresh failed: %s", exc)
+
+    threading.Thread(
+        target=_hourly_refresh,
+        daemon=True,
+        name="rq-trending-hourly",
+    ).start()
 
 
 @app.get("/")

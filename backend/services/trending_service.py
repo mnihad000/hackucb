@@ -19,6 +19,7 @@ from models.trending import (
 from services.investigation_repository import InvestigationRepository
 from services.redis_store import PhraseStore
 from services.search_provider import source_name_from_url
+from services.trending_cache import TrendingRedisCache
 from services.trending_ranker import TrendingRanker
 from services.trending_repository import TrendingRepository
 from services.trending_runtime import TrendingRuntimeStore
@@ -40,7 +41,8 @@ class TrendingService:
         self._settings = get_settings()
         self._repository = repository
         self._runtime = runtime_store
-        self._discovery = discovery_agent or DiscoveryAgent()
+        self._cache = TrendingRedisCache(self._settings.REDIS_URL)
+        self._discovery = discovery_agent or DiscoveryAgent(cache=self._cache)
         self._retriever = retriever_agent or RetrieverAgent(
             InvestigationRepository(self._settings.INVESTIGATION_DB_PATH)
         )

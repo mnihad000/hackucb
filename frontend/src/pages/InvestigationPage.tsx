@@ -31,6 +31,7 @@ export default function InvestigationPage() {
   const isMockRequest = isMockInvestigationRequest(id, searchParams);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isNotFound, setIsNotFound] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
   const [workspace, setWorkspace] = useState<LiveInvestigationWorkspace | null>(null);
 
   useEffect(() => {
@@ -42,6 +43,25 @@ export default function InvestigationPage() {
     }
 
     let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function scheduleNextPoll(investigationId: string) {
+      pollTimer = setTimeout(async () => {
+        if (cancelled) return;
+        try {
+          const updated = await getInvestigationWorkspace(investigationId);
+          if (cancelled) return;
+          startTransition(() => setWorkspace(updated));
+          if (!updated.research_loop) {
+            scheduleNextPoll(investigationId);
+          } else {
+            setIsRunning(false);
+          }
+        } catch {
+          if (!cancelled) scheduleNextPoll(investigationId);
+        }
+      }, 8000);
+    }
 
     async function hydrateLiveInvestigation() {
       setErrorMessage(null);
@@ -50,37 +70,32 @@ export default function InvestigationPage() {
       try {
         if (isMockRequest) {
           const nextWorkspace = getMockInvestigationWorkspace(id, query);
-          if (cancelled) {
-            return;
-          }
-
-          startTransition(() => {
-            setWorkspace(nextWorkspace);
-          });
+          if (cancelled) return;
+          startTransition(() => setWorkspace(nextWorkspace));
           return;
         }
 
         let nextWorkspace = await getInvestigationWorkspace(id);
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
+        startTransition(() => setWorkspace(nextWorkspace));
 
-        startTransition(() => {
-          setWorkspace(nextWorkspace);
-        });
-
-        if (!nextWorkspace.research_loop || !nextWorkspace.report) {
+        if (!nextWorkspace.research_loop) {
+          setIsRunning(true);
+          // POST /run starts research loop in background and returns immediately
           nextWorkspace = await runInvestigation(id);
-          if (cancelled) {
-            return;
+          if (cancelled) return;
+          startTransition(() => setWorkspace(nextWorkspace));
+          // Poll until background thread completes the loop
+          if (!nextWorkspace.research_loop) {
+            scheduleNextPoll(id);
+          } else {
+            setIsRunning(false);
           }
-          startTransition(() => {
-            setWorkspace(nextWorkspace);
-          });
         }
       } catch (error) {
         if (!cancelled) {
           setWorkspace(null);
+          setIsRunning(false);
           if (error instanceof ApiError && error.status === 404) {
             setIsNotFound(true);
             setErrorMessage(null);
@@ -99,6 +114,7 @@ export default function InvestigationPage() {
 
     return () => {
       cancelled = true;
+      if (pollTimer) clearTimeout(pollTimer);
     };
   }, [id, isMockRequest, query, searchParams]);
 
@@ -155,6 +171,9 @@ export default function InvestigationPage() {
                     <span className="data-pill">{experience.confidence} confidence</span>
                     <span className="data-pill">{experience.sourceCount} sources</span>
                     <span className="data-pill">{experience.receiptCount} receipts</span>
+                    {isRunning ? (
+                      <span className="data-pill animate-pulse">Researching&hellip;</span>
+                    ) : null}
                   </div>
 
                   <div className="mt-7 rounded-[1.6rem] border border-[rgba(19,35,58,0.08)] bg-white/78 p-5">
@@ -176,7 +195,7 @@ export default function InvestigationPage() {
                   <MetricCard label="Receipts available" value={`${experience.receiptCount}`} />
                   <MetricCard
                     label="Current narrative state"
-                    value={stageLabel ?? experience.status}
+                    value={isRunning ? (stageLabel ?? "Investigating") : (stageLabel ?? experience.status)}
                   />
                 </div>
               </div>
@@ -184,7 +203,7 @@ export default function InvestigationPage() {
           ) : isNotFound ? (
             <InvestigationNotFoundCard investigationId={id} />
           ) : (
-            <LoadingHero query={query} />
+            <LoadingHero query={query} isRunning={isRunning} />
           )}
 
           {workspace ? (
@@ -255,18 +274,44 @@ export default function InvestigationPage() {
   );
 }
 
-function LoadingHero({ query }: { query?: string }) {
+function LoadingHero({ query, isRunning }: { query?: string; isRunning?: boolean }) {
+  const stages = [
+    "Retrieving sources",
+    "Building timeline",
+    "Running counter-narratives",
+    "Analyst synthesis",
+    "Skeptic review",
+    "Finalizing receipts",
+  ];
+  const [stageIndex, setStageIndex] = useState(0);
+
+  useEffect(() => {
+    if (!isRunning) return;
+    const timer = setInterval(() => {
+      setStageIndex((i) => (i + 1) % stages.length);
+    }, 4500);
+    return () => clearInterval(timer);
+  }, [isRunning]);
+
   return (
     <div className="investigation-hero page-enter overflow-hidden rounded-[2.2rem] border border-[rgba(19,35,58,0.08)] p-7 shadow-[0_55px_90px_-54px_rgba(19,35,58,0.46)] backdrop-blur-xl sm:p-9">
       <p className="eyebrow">Live investigation workspace</p>
       <h1 className="mt-5 font-[Iowan_Old_Style,Palatino_Linotype,Book_Antiqua,Georgia,serif] text-4xl font-semibold tracking-[-0.05em] text-[var(--ink)] sm:text-5xl lg:text-6xl">
-        Building investigation
+        {isRunning ? "Investigating" : "Building investigation"}
       </h1>
       <p className="mt-5 max-w-3xl text-lg leading-8 text-[var(--muted)]">
-        {query
-          ? `Preparing evidence-backed investigation for "${query}".`
-          : "Preparing evidence-backed investigation."}
+        {isRunning
+          ? `Multi-agent research loop running${query ? ` for "${query}"` : ""}. Results update automatically.`
+          : query
+            ? `Preparing evidence-backed investigation for "${query}".`
+            : "Preparing evidence-backed investigation."}
       </p>
+      {isRunning ? (
+        <div className="mt-6 flex items-center gap-3">
+          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[var(--accent)]" />
+          <span className="text-sm font-medium text-[var(--muted)]">{stages[stageIndex]}&hellip;</span>
+        </div>
+      ) : null}
     </div>
   );
 }

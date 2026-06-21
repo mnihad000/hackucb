@@ -1,7 +1,6 @@
 import {
   forwardRef,
   startTransition,
-  useEffect,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -104,32 +103,35 @@ export default function LandingPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function loadFeed() {
       try {
         const response = await getTrendingFeed(3);
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
         startTransition(() => {
           setFeed(response);
           setFeedErrorMessage(null);
         });
-      } catch (error) {
-        if (cancelled) {
-          return;
+        // Keep polling while backend is still warming up or data is stale
+        if (response.state === "warming" || response.state === "stale") {
+          retryTimer = setTimeout(() => { if (!cancelled) void loadFeed(); }, 15000);
         }
+      } catch (error) {
+        if (cancelled) return;
         setFeedErrorMessage(
           error instanceof ApiError
             ? error.message
             : "Unable to load the live hot political news feed.",
         );
+        retryTimer = setTimeout(() => { if (!cancelled) void loadFeed(); }, 20000);
       }
     }
 
     void loadFeed();
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, []);
 

@@ -152,9 +152,11 @@ class MultiSearchProvider:
         self,
         discovery_provider: SearchProvider | None = None,
         enrichment_provider: SearchProvider | None = None,
+        cache=None,
     ) -> None:
         self.discovery_provider = discovery_provider or SerpApiSearchProvider()
         self.enrichment_provider = enrichment_provider or TavilySearchProvider()
+        self._cache = cache  # optional TrendingRedisCache
 
     def search_discovery(
         self,
@@ -163,7 +165,7 @@ class MultiSearchProvider:
         source_types: list[str],
         limit: int,
     ) -> list[SearchResult]:
-        return self.discovery_provider.search(query, time_window, source_types, limit)
+        return self._cached_search(self.discovery_provider, query, time_window, source_types, limit)
 
     def search_enrichment(
         self,
@@ -172,7 +174,34 @@ class MultiSearchProvider:
         source_types: list[str],
         limit: int,
     ) -> list[SearchResult]:
-        return self.enrichment_provider.search(query, time_window, source_types, limit)
+        return self._cached_search(self.enrichment_provider, query, time_window, source_types, limit)
+
+    def _cached_search(
+        self,
+        provider: SearchProvider,
+        query: str,
+        time_window: InvestigationPlanTimeWindow,
+        source_types: list[str],
+        limit: int,
+    ) -> list[SearchResult]:
+        if self._cache is not None:
+            cached = self._cache.get_search(provider.name, query)
+            if cached is not None:
+                try:
+                    return [SearchResult(**r) for r in cached]
+                except Exception:
+                    pass  # malformed cache → fall through to live search
+
+        results = provider.search(query, time_window, source_types, limit)
+
+        if self._cache is not None and results:
+            self._cache.set_search(
+                provider.name,
+                query,
+                [r.model_dump(mode="json") for r in results],
+            )
+
+        return results
 
     @property
     def provider_mix(self) -> dict[str, str]:

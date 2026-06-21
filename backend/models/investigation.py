@@ -34,6 +34,7 @@ InvestigationStatus = Literal[
     "claim_counterpoint_completed",
     "receipts_completed",
     "agent_debate_completed",
+    "source_verification_completed",
     "report_completed",
     "research_loop_completed",
 ]
@@ -51,6 +52,7 @@ InvestigationStage = Literal[
     "claim_counterpoint",
     "receipts",
     "agent_debate",
+    "source_verification",
     "report",
     "research_loop",
 ]
@@ -84,6 +86,7 @@ ClaimSupportStatus = Literal[
     "insufficient_evidence",
 ]
 ReceiptVerificationStatus = Literal["verified", "unavailable", "metadata_mismatch", "pending"]
+SourceVerificationBackend = Literal["browserbase", "httpx_fallback", "cache", "demo_fixture", "not_verified"]
 ClaimVerificationState = Literal[
     "verified",
     "mixed",
@@ -580,6 +583,45 @@ class ReceiptsResult(BaseModel):
     cached: bool = False
 
 
+class SourceVerificationReceipt(BaseModel):
+    document_id: str
+    url: str
+    source_name: str
+    title: str
+    raw_status: str
+    verification_status: ReceiptVerificationStatus
+    backend: SourceVerificationBackend
+    live_title: str | None = None
+    stored_title: str | None = None
+    evidence_snippet: str | None = None
+    support_reason: str | None = None
+    checked_at: str | None = None
+    error: str | None = None
+
+
+class SourceVerificationResult(BaseModel):
+    investigation_id: str
+    receipts: list[SourceVerificationReceipt] = Field(default_factory=list)
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    backend_counts: dict[str, int] = Field(default_factory=dict)
+    verified_count: int = 0
+    browserbase_verified_count: int = 0
+    fallback_checked_count: int = 0
+    pending_count: int = 0
+    unavailable_count: int = 0
+    metadata_mismatch_count: int = 0
+    limitations: list[str] = Field(default_factory=list)
+    cached: bool = False
+
+
+class SourceVerificationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force_refresh: bool = False
+    cited_only: bool = True
+    max_documents: int | None = Field(default=None, ge=1, le=50)
+
+
 class ReceiptsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -856,6 +898,7 @@ class InvestigationWorkspace(BaseModel):
     analyst: AnalystResult | None = None
     claim_counterpoints: ClaimCounterpointResult | None = None
     receipts: ReceiptsResult | None = None
+    source_verification: SourceVerificationResult | None = None
     agent_debate: AgentDebateResult | None = None
     report: FinalReportResult | None = None
 

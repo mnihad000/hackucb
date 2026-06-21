@@ -47,6 +47,7 @@ class Receipt:
         published_at: str | None = None,
         checked_at: str | None = None,
         error: str | None = None,
+        backend: str = "browserbase",
     ) -> None:
         self.receipt_id = receipt_id
         self.source_id = source_id
@@ -60,6 +61,7 @@ class Receipt:
         self.published_at = published_at
         self.checked_at = checked_at or datetime.now(timezone.utc).isoformat()
         self.error = error
+        self.backend = backend
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,6 +77,7 @@ class Receipt:
             "published_at": self.published_at,
             "checked_at": self.checked_at,
             "error": self.error,
+            "backend": self.backend,
         }
 
 
@@ -124,6 +127,7 @@ class BrowserbaseAgent:
                 published_at=cached.get("published_at"),
                 checked_at=cached.get("checked_at"),
                 error=cached.get("error"),
+                backend=cached.get("backend", "cache"),
             )
 
         if self._use_real_browser:
@@ -150,6 +154,7 @@ class BrowserbaseAgent:
                     verified_status="needs_manual_review",
                     stored_title=doc.title,
                     error=str(exc),
+                    backend="browserbase" if self._use_real_browser else "httpx_fallback",
                 ))
         return receipts
 
@@ -185,6 +190,7 @@ class BrowserbaseAgent:
                 live_title=live_title,
                 html=html,
                 http_status=200,
+                backend="browserbase",
             )
 
         except Exception as exc:
@@ -196,6 +202,7 @@ class BrowserbaseAgent:
                 verified_status="needs_manual_review",
                 stored_title=doc.title,
                 error=str(exc),
+                backend="browserbase",
             )
 
     # ------------------------------------------------------------------
@@ -217,18 +224,21 @@ class BrowserbaseAgent:
                     receipt_id=receipt_id, source_id=doc.id, url=doc.url,
                     verified_status="unavailable", stored_title=doc.title,
                     error="HTTP 404",
+                    backend="httpx_fallback",
                 )
             if response.status_code in (401, 403):
                 return Receipt(
                     receipt_id=receipt_id, source_id=doc.id, url=doc.url,
                     verified_status="blocked", stored_title=doc.title,
                     error=f"HTTP {response.status_code}",
+                    backend="httpx_fallback",
                 )
             if response.status_code >= 400:
                 return Receipt(
                     receipt_id=receipt_id, source_id=doc.id, url=doc.url,
                     verified_status="unavailable", stored_title=doc.title,
                     error=f"HTTP {response.status_code}",
+                    backend="httpx_fallback",
                 )
 
             html = response.text
@@ -239,6 +249,7 @@ class BrowserbaseAgent:
                 live_title=live_title,
                 html=html,
                 http_status=response.status_code,
+                backend="httpx_fallback",
             )
 
         except httpx.TimeoutException:
@@ -246,12 +257,14 @@ class BrowserbaseAgent:
                 receipt_id=receipt_id, source_id=doc.id, url=doc.url,
                 verified_status="unavailable", stored_title=doc.title,
                 error="timeout",
+                backend="httpx_fallback",
             )
         except Exception as exc:
             return Receipt(
                 receipt_id=receipt_id, source_id=doc.id, url=doc.url,
                 verified_status="unavailable", stored_title=doc.title,
                 error=str(exc),
+                backend="httpx_fallback",
             )
 
     # ------------------------------------------------------------------
@@ -265,6 +278,7 @@ class BrowserbaseAgent:
         live_title: str | None,
         html: str,
         http_status: int,
+        backend: str,
     ) -> Receipt:
         snippet_found = self._snippet_present(doc.snippet, html) if doc.snippet else False
         title_matches = self._titles_match(doc.title, live_title)
@@ -297,6 +311,7 @@ class BrowserbaseAgent:
             evidence_snippet=doc.snippet,
             support_reason=support_reason,
             author=author,
+            backend=backend,
         )
 
     # ------------------------------------------------------------------

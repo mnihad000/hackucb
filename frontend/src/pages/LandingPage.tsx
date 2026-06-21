@@ -275,7 +275,7 @@ const Stream = forwardRef<
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [pathD, setPathD] = useState("");
   const [fractions, setFractions] = useState<number[]>([]);
-  const [lit, setLit] = useState<boolean[]>(() => FALLBACK_TOPICS.map(() => false));
+  const [lit, setLit] = useState<boolean[]>(() => radarTopics.map(() => false));
 
   useEffect(() => {
     getTrendingFeed(3)
@@ -393,6 +393,7 @@ const Stream = forwardRef<
   return (
     <section
       ref={forwardedRef}
+      data-topic-key={topicKey}
       className="relative px-4 pb-4 pt-10 sm:px-6 lg:px-8"
     >
       <div className="mx-auto max-w-5xl">

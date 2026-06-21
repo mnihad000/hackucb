@@ -128,6 +128,17 @@ class PlannerResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class RecentInvestigationSummary(BaseModel):
+    investigation_id: str
+    query_text: str
+    status: InvestigationStatus
+    updated_at: datetime
+    report_title: str
+    report_summary: str | None = None
+    receipt_count: int = 0
+    source_count: int = 0
+
+
 class SearchResult(BaseModel):
     query: str
     title: str

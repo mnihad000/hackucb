@@ -1,5 +1,6 @@
 import type {
   LiveInvestigationWorkspace,
+  LiveRecentInvestigationSummary,
   LiveTrendingFeed,
   LiveTrendingInvestigationResponse,
 } from "../types/rhetoriq";
@@ -62,6 +63,12 @@ export async function createInvestigation(queryText: string) {
 
 export async function getTrendingFeed(limit = 6) {
   return request<LiveTrendingFeed>(`/api/trending?limit=${limit}`);
+}
+
+export async function getRecentInvestigations(limit = 6) {
+  return request<LiveRecentInvestigationSummary[]>(
+    `/api/investigations?limit=${limit}`,
+  );
 }
 
 export async function startTrendingInvestigation(topicId: string) {

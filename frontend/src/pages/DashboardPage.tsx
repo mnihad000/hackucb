@@ -4,40 +4,64 @@ import NarrativeRadar from "../components/dashboard/NarrativeRadar";
 import RecentInvestigations from "../components/dashboard/RecentInvestigations";
 import TrustStrip from "../components/dashboard/TrustStrip";
 import Header from "../components/layout/Header";
-import { ApiError, getTrendingFeed } from "../lib/api";
-import { examplePrompts, recentInvestigations } from "../lib/demoData";
-import type { LiveTrendingFeed } from "../types/rhetoriq";
+import { ApiError, getRecentInvestigations, getTrendingFeed } from "../lib/api";
+import { examplePrompts } from "../lib/demoData";
+import type {
+  LiveRecentInvestigationSummary,
+  LiveTrendingFeed,
+} from "../types/rhetoriq";
 
 export default function DashboardPage() {
   const [feed, setFeed] = useState<LiveTrendingFeed | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [feedErrorMessage, setFeedErrorMessage] = useState<string | null>(null);
+  const [recentInvestigations, setRecentInvestigations] = useState<
+    LiveRecentInvestigationSummary[] | null
+  >(null);
+  const [recentErrorMessage, setRecentErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadFeed() {
-      try {
-        const nextFeed = await getTrendingFeed();
-        if (cancelled) {
-          return;
-        }
+    async function loadDashboard() {
+      const [feedResult, recentResult] = await Promise.allSettled([
+        getTrendingFeed(),
+        getRecentInvestigations(),
+      ]);
+
+      if (cancelled) {
+        return;
+      }
+
+      if (feedResult.status === "fulfilled") {
         startTransition(() => {
-          setFeed(nextFeed);
-          setErrorMessage(null);
+          setFeed(feedResult.value);
+          setFeedErrorMessage(null);
         });
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-        setErrorMessage(
+      } else {
+        const error = feedResult.reason;
+        setFeedErrorMessage(
           error instanceof ApiError
             ? error.message
             : "Unable to load the live hot-topics feed.",
         );
       }
+
+      if (recentResult.status === "fulfilled") {
+        startTransition(() => {
+          setRecentInvestigations(recentResult.value);
+          setRecentErrorMessage(null);
+        });
+      } else {
+        const error = recentResult.reason;
+        setRecentErrorMessage(
+          error instanceof ApiError
+            ? error.message
+            : "Unable to load recent live investigations.",
+        );
+      }
     }
 
-    void loadFeed();
+    void loadDashboard();
     return () => {
       cancelled = true;
     };
@@ -47,8 +71,11 @@ export default function DashboardPage() {
     <main>
       <Header />
       <Hero prompts={examplePrompts} />
-      <NarrativeRadar feed={feed} errorMessage={errorMessage} />
-      <RecentInvestigations investigations={recentInvestigations} />
+      <NarrativeRadar feed={feed} errorMessage={feedErrorMessage} />
+      <RecentInvestigations
+        investigations={recentInvestigations}
+        errorMessage={recentErrorMessage}
+      />
       <TrustStrip />
     </main>
   );

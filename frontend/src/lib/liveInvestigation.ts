@@ -25,10 +25,6 @@ const TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
 });
 
-export function isLiveInvestigationId(id: string) {
-  return id.startsWith("inv_");
-}
-
 export function buildInvestigationExperienceFromWorkspace(
   workspace: LiveInvestigationWorkspace,
 ): InvestigationExperience {

@@ -13,6 +13,7 @@ from models.investigation import (
     CounterNarrativeResult,
     FinalReportResult,
     InvestigationPlan,
+    RecentInvestigationSummary,
     InvestigationWorkspace,
     NarrativeFamilyResult,
     ReceiptsResult,
@@ -110,6 +111,60 @@ class InvestigationRepository:
             agent_debate=self.get_agent_debate_result(investigation_id),
             report=self.get_final_report_result(investigation_id),
         )
+
+    def get_recent_investigations(self, limit: int = 6) -> list[RecentInvestigationSummary]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT investigation_id, query_text, status, updated_at, plan_json
+                FROM investigations
+                WHERE investigation_id LIKE 'inv_%' AND status != 'planning_completed'
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+        results: list[RecentInvestigationSummary] = []
+        for row in rows:
+            investigation_id = row["investigation_id"]
+            plan = (
+                InvestigationPlan.model_validate_json(row["plan_json"])
+                if row["plan_json"]
+                else None
+            )
+            retrieval = self.get_retrieval_result(investigation_id)
+            report = self.get_final_report_result(investigation_id)
+            analyst = self.get_analyst_result(investigation_id)
+            timeline = self.get_timeline_result(investigation_id)
+            receipts = self.get_receipts_result(investigation_id)
+
+            report_title = (
+                report.report_title
+                if report is not None
+                else self._derive_recent_title(plan, row["query_text"])
+            )
+            report_summary = None
+            if report is not None:
+                report_summary = report.report_summary
+            elif analyst is not None:
+                report_summary = analyst.draft_report_sections.executive_summary
+            elif timeline is not None:
+                report_summary = timeline.timeline_summary
+
+            results.append(
+                RecentInvestigationSummary(
+                    investigation_id=investigation_id,
+                    query_text=row["query_text"],
+                    status=row["status"],
+                    updated_at=datetime.fromisoformat(row["updated_at"]),
+                    report_title=report_title,
+                    report_summary=report_summary,
+                    receipt_count=self._count_receipts(receipts),
+                    source_count=self._count_sources(retrieval),
+                )
+            )
+        return results
 
     def save_retrieval_result(self, result: RetrievalResult, documents: list[Document]) -> None:
         now = datetime.now(timezone.utc).isoformat()
@@ -538,6 +593,28 @@ class InvestigationRepository:
         parent = os.path.dirname(self._db_path)
         if parent:
             os.makedirs(parent, exist_ok=True)
+
+    def _count_receipts(self, receipts: ReceiptsResult | None) -> int:
+        if receipts is None:
+            return 0
+
+        seen: set[str] = set()
+        for review in [*receipts.claim_receipts, *receipts.counter_claim_receipts]:
+            for item in [*review.supporting_receipts, *review.contradicting_receipts]:
+                seen.add(f"{review.claim_id}:{item.document_id}")
+        return len(seen)
+
+    def _count_sources(self, retrieval: RetrievalResult | None) -> int:
+        if retrieval is None:
+            return 0
+        if retrieval.coverage_summary.total_documents:
+            return retrieval.coverage_summary.total_documents
+        return len(retrieval.retrieved_document_ids)
+
+    def _derive_recent_title(self, plan: InvestigationPlan | None, query_text: str) -> str:
+        if plan is not None and plan.topic.strip():
+            return f"{plan.topic.strip().title()} Investigation"
+        return query_text.strip() or "Investigation"
 
     def _init_schema(self) -> None:
         with self._connect() as conn:

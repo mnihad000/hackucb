@@ -5,8 +5,8 @@ import Header from "../components/layout/Header";
 import { Waves } from "../components/ui/wave-background";
 import {
   ApiError,
-  runAgentDebate,
   getInvestigationWorkspace,
+  runAgentDebate,
   runAnalyst,
   runClaimCounterpoints,
   runCounterNarratives,
@@ -17,7 +17,6 @@ import {
   runSourceDiversity,
   runTimeline,
 } from "../lib/api";
-import { getInvestigationExperience } from "../lib/demoData";
 import {
   buildInvestigationExperienceFromWorkspace,
   formatClaimConfidence,
@@ -30,26 +29,26 @@ import {
   getSourceDiversityHighlights,
   getStageLabel,
   getTopClaims,
-  isLiveInvestigationId,
 } from "../lib/liveInvestigation";
 import type { LiveInvestigationWorkspace, LiveSourceDiversityResult } from "../types/rhetoriq";
 
 export default function InvestigationPage() {
-  const { id = "demo" } = useParams();
+  const { id = "" } = useParams();
   const [searchParams] = useSearchParams();
   const query = searchParams.get("q") ?? undefined;
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isRunningPipeline, setIsRunningPipeline] = useState(false);
+  const [isNotFound, setIsNotFound] = useState(false);
   const [workspace, setWorkspace] = useState<LiveInvestigationWorkspace | null>(null);
-  const isLiveInvestigation = isLiveInvestigationId(id);
 
   useEffect(() => {
-    if (!isLiveInvestigation) {
+    if (!id) {
       setWorkspace(null);
       setErrorMessage(null);
       setIsLoading(false);
       setIsRunningPipeline(false);
+      setIsNotFound(true);
       return;
     }
 
@@ -58,6 +57,7 @@ export default function InvestigationPage() {
     async function hydrateLiveInvestigation() {
       setIsLoading(true);
       setErrorMessage(null);
+      setIsNotFound(false);
 
       try {
         let nextWorkspace = await getInvestigationWorkspace(id);
@@ -190,11 +190,17 @@ export default function InvestigationPage() {
         }
       } catch (error) {
         if (!cancelled) {
-          setErrorMessage(
-            error instanceof ApiError
-              ? error.message
-              : "Unable to load the live investigation.",
-          );
+          setWorkspace(null);
+          if (error instanceof ApiError && error.status === 404) {
+            setIsNotFound(true);
+            setErrorMessage(null);
+          } else {
+            setErrorMessage(
+              error instanceof ApiError
+                ? error.message
+                : "Unable to load the live investigation.",
+            );
+          }
         }
       } finally {
         if (!cancelled) {
@@ -209,13 +215,11 @@ export default function InvestigationPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, isLiveInvestigation]);
+  }, [id]);
 
-  const experience = isLiveInvestigation
-    ? workspace
-      ? buildInvestigationExperienceFromWorkspace(workspace)
-      : null
-    : getInvestigationExperience(id, query);
+  const experience = workspace
+    ? buildInvestigationExperienceFromWorkspace(workspace)
+    : null;
   const coverageHighlights = workspace ? getCoverageHighlights(workspace) : [];
   const limitations = workspace ? getLimitations(workspace) : [];
   const recommendedChecks = workspace ? getRecommendedChecks(workspace) : [];
@@ -294,11 +298,13 @@ export default function InvestigationPage() {
                 </div>
               </div>
             </div>
+          ) : isNotFound ? (
+            <InvestigationNotFoundCard investigationId={id} />
           ) : (
             <LoadingHero query={query} />
           )}
 
-          {isLiveInvestigation ? (
+          {!isNotFound ? (
             <PipelineStatusCard
               errorMessage={errorMessage}
               isLoading={isLoading}
@@ -393,7 +399,7 @@ export default function InvestigationPage() {
             </div>
           ) : null}
 
-          {!workspace && !experience && errorMessage ? (
+          {!workspace && !experience && errorMessage && !isNotFound ? (
             <div className="rounded-[1.6rem] border border-[rgba(146,71,71,0.18)] bg-[rgba(255,244,244,0.92)] p-6 text-sm leading-7 text-[rgb(130,50,50)]">
               {errorMessage}
             </div>
@@ -416,6 +422,38 @@ function LoadingHero({ query }: { query?: string }) {
           ? `Preparing evidence-backed investigation for "${query}".`
           : "Preparing evidence-backed investigation."}
       </p>
+    </div>
+  );
+}
+
+function InvestigationNotFoundCard({
+  investigationId,
+}: {
+  investigationId: string;
+}) {
+  return (
+    <div className="investigation-hero page-enter overflow-hidden rounded-[2.2rem] border border-[rgba(146,71,71,0.18)] bg-[rgba(255,244,244,0.92)] p-7 shadow-[0_55px_90px_-54px_rgba(130,50,50,0.24)] backdrop-blur-xl sm:p-9">
+      <p className="eyebrow">Investigation unavailable</p>
+      <h1 className="mt-5 font-[Iowan_Old_Style,Palatino_Linotype,Book_Antiqua,Georgia,serif] text-4xl font-semibold tracking-[-0.05em] text-[var(--ink)] sm:text-5xl lg:text-6xl">
+        Investigation not found
+      </h1>
+      <p className="mt-5 max-w-3xl text-lg leading-8 text-[var(--muted)]">
+        {`The live investigation "${investigationId}" could not be found. Old seeded demo routes are no longer supported.`}
+      </p>
+      <div className="mt-7 flex flex-wrap gap-3">
+        <Link
+          to="/"
+          className="inline-flex items-center justify-center rounded-[1.1rem] bg-[var(--ink)] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[var(--accent)]"
+        >
+          Back to homepage
+        </Link>
+        <Link
+          to="/#ask-rhetoriq"
+          className="inline-flex items-center justify-center rounded-[1.1rem] border border-[var(--border)] bg-white px-5 py-3 text-sm font-semibold text-[var(--ink)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+        >
+          Start a new investigation
+        </Link>
+      </div>
     </div>
   );
 }

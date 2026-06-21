@@ -53,6 +53,7 @@ def root() -> dict:
             "GET    /api/narratives/{id}",
             "GET    /api/narratives/{id}/timeline",
             "POST   /api/investigate  (query_text -> planner artifact)",
+            "GET    /api/investigations  (list recent persisted investigations)",
             "GET    /api/investigations/{id}  (load persisted investigation workspace)",
             "POST   /api/investigations/{id}/retrieve  (run retriever agent)",
             "POST   /api/investigations/{id}/source-diversity  (build deterministic source diversity artifact)",

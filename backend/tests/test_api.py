@@ -13,6 +13,10 @@ from api import narratives as narratives_api
 from models.document import Document
 from models.investigation import (
     AgentDebateResult,
+    AnalystResult,
+    DraftReportSections,
+    FinalReportResult,
+    FinalReportSections,
     InvestigationPlan,
     NarrativeFamilyResult,
     ReceiptsResult,
@@ -78,6 +82,31 @@ def _timeline_retrieval(investigation_id: str, plan: InvestigationPlan) -> Retri
         context_document_ids=[],
         warnings=[],
         evidence_coverage_confidence="medium",
+    )
+
+
+def _recent_report(investigation_id: str, plan: InvestigationPlan) -> FinalReportResult:
+    return FinalReportResult(
+        investigation_id=investigation_id,
+        plan_snapshot=plan,
+        report_title="Hidden Energy Tax Investigation",
+        report_summary="Final persisted report summary.",
+        sections=FinalReportSections(
+            headline="headline",
+            executive_summary="summary",
+            observed_facts="facts",
+            reasonable_inferences="inferences",
+            timeline_summary="timeline",
+            counter_narrative_summary="counter",
+            limitations="limitations",
+            recommended_human_checks="checks",
+        ),
+        key_claims=[],
+        evidence_packet=[],
+        limitations=[],
+        recommended_human_checks=[],
+        confidence_score=0.6,
+        confidence_label="medium",
     )
 
 
@@ -263,6 +292,95 @@ def test_get_investigation_workspace_returns_persisted_artifacts(tmp_path, monke
     assert payload["claim_counterpoints"] is None
     assert payload["receipts"] is None
     assert payload["agent_debate"] is None
+
+
+def test_list_recent_investigations_returns_live_summaries(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    planner_only = client.post(
+        "/api/investigate",
+        json={"query_text": "Draft-only investigation"},
+    ).json()["investigation_id"]
+
+    report_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Where did the hidden energy tax narrative come from?"},
+    )
+    report_id = report_response.json()["investigation_id"]
+    report_plan = repo.get_plan(report_id)
+    assert report_plan is not None
+    repo.save_retrieval_result(_timeline_retrieval(report_id, report_plan), _timeline_docs())
+    repo.save_final_report_result(_recent_report(report_id, report_plan))
+
+    fallback_response = client.post(
+        "/api/investigate",
+        json={"query_text": "Trace the public housing narrative"},
+    )
+    fallback_id = fallback_response.json()["investigation_id"]
+    fallback_plan = repo.get_plan(fallback_id)
+    assert fallback_plan is not None
+    repo.save_retrieval_result(_timeline_retrieval(fallback_id, fallback_plan), _timeline_docs())
+    repo.save_timeline_result(
+        TimelineResult(
+            investigation_id=fallback_id,
+            plan_snapshot=fallback_plan,
+            timeline_events=[],
+            first_observed_doc_id="doc_1",
+            timeline_summary="Timeline fallback summary.",
+            limitations=[],
+            confidence_score=0.45,
+            confidence_label="medium",
+        )
+    )
+    repo.save_analyst_result(
+        AnalystResult(
+            investigation_id=fallback_id,
+            plan_snapshot=fallback_plan,
+            draft_report_sections=DraftReportSections(
+                executive_summary="Analyst fallback summary.",
+                observed_facts="facts",
+                reasonable_inferences="inferences",
+                timeline_summary="timeline",
+                counter_narrative_summary="counter",
+                uncertainties="uncertain",
+            ),
+            candidate_claims=[],
+            limitations=[],
+            recommended_human_checks=[],
+            confidence_score=0.55,
+            confidence_label="medium",
+        )
+    )
+
+    repo.save_plan("demo", "seeded demo", fallback_plan)
+    repo.save_retrieval_result(_timeline_retrieval("demo", fallback_plan), _timeline_docs())
+
+    response = client.get("/api/investigations?limit=5")
+    assert response.status_code == 200
+    payload = response.json()
+    ids = [item["investigation_id"] for item in payload]
+    assert planner_only not in ids
+    assert "demo" not in ids
+    assert report_id in ids
+    assert fallback_id in ids
+
+    report_item = next(item for item in payload if item["investigation_id"] == report_id)
+    assert report_item["report_title"] == "Hidden Energy Tax Investigation"
+    assert report_item["report_summary"] == "Final persisted report summary."
+    assert report_item["source_count"] == 2
+
+    fallback_item = next(item for item in payload if item["investigation_id"] == fallback_id)
+    assert fallback_item["report_summary"] == "Analyst fallback summary."
+
+
+def test_list_recent_investigations_returns_empty_when_none_exist(tmp_path, monkeypatch):
+    repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
+    monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+
+    response = client.get("/api/investigations")
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_source_diversity_endpoint_builds_artifact_from_persisted_state(tmp_path, monkeypatch):

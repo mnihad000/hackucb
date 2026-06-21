@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from uuid import uuid4
 
 from agents.receipts_agent import build_receipts as build_receipts_agent
@@ -25,6 +25,7 @@ from models.investigation import (
     NarrativeFamilyResult,
     PlannerRequest,
     PlannerResponse,
+    RecentInvestigationSummary,
     ReceiptsRequest,
     ReceiptsResult,
     RetrieveRequest,
@@ -301,6 +302,17 @@ def get_narrative_timeline(narrative_id: str) -> list[dict]:
     docs = _retriever.get_related_documents(cluster, _active_documents())
     phrase = cluster.canonical_phrases[0]
     return _spike_detector.compute_phrase_timeline(phrase, docs)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/investigations - list recent persisted investigations
+# ---------------------------------------------------------------------------
+
+@router.get("/investigations", response_model=list[RecentInvestigationSummary])
+def list_recent_investigations(
+    limit: int = Query(default=6, ge=1, le=12),
+) -> list[RecentInvestigationSummary]:
+    return _investigation_repo.get_recent_investigations(limit=limit)
 
 
 # ---------------------------------------------------------------------------

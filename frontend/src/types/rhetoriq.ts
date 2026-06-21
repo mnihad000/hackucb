@@ -70,13 +70,15 @@ export type LiveTrendingInvestigationResponse = {
   canonical_phrase: string;
 };
 
-export type RecentInvestigation = {
-  id: string;
-  title: string;
-  summary: string;
-  updatedAt: string;
-  receiptCount: number;
-  focus: string;
+export type LiveRecentInvestigationSummary = {
+  investigation_id: string;
+  query_text: string;
+  status: InvestigationPipelineStatus;
+  updated_at: string;
+  report_title: string;
+  report_summary: string | null;
+  receipt_count: number;
+  source_count: number;
 };
 
 export type InvestigationStub = {

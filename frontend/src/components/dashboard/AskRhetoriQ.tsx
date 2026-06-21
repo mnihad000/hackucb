@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { createInvestigationHref } from "../../lib/demoData";
 import { ApiError, createInvestigation } from "../../lib/api";
+import { createInvestigationHref } from "../../lib/investigationHref";
 import type { ExamplePrompt } from "../../types/rhetoriq";
 
 type AskRhetoriQProps = {
@@ -48,7 +48,10 @@ export default function AskRhetoriQ({ prompts }: AskRhetoriQProps) {
   }
 
   return (
-    <div className="surface-card relative overflow-hidden p-6 sm:p-7">
+    <div
+      id="ask-rhetoriq"
+      className="surface-card relative overflow-hidden p-6 sm:p-7"
+    >
       <div className="absolute inset-x-0 top-0 h-24 bg-[linear-gradient(135deg,rgba(197,210,226,0.26),rgba(197,210,226,0))]" />
       <div className="relative">
         <p className="eyebrow">Ask RhetoriQ</p>

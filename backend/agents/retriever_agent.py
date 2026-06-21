@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 import logging
 import re
@@ -37,6 +38,14 @@ _COUNTER_OUTPUT = "counter_narratives"
 _TIMELINE_OUTPUT = "timeline"
 _GRAPH_OUTPUT = "graph"
 _RECEIPTS_OUTPUT = "receipts"
+
+
+@dataclass
+class RetrievalPreview:
+    documents: list[Document]
+    coverage_summary: CoverageSummary
+    warnings: list[str]
+    search_rounds: list[RetrievalRound]
 
 
 class RetrieverAgent:
@@ -180,6 +189,97 @@ class RetrieverAgent:
 
         return result
 
+    def expand_candidate(
+        self,
+        plan: InvestigationPlan,
+        max_rounds: int | None = None,
+    ) -> RetrievalPreview:
+        if self._settings.DEMO_MODE:
+            return self._preview_from_local_corpus(plan)
+
+        effective_max_rounds = max_rounds or min(2, self._settings.RETRIEVER_MAX_ROUNDS)
+        if self._provider is None:
+            return RetrievalPreview(
+                documents=[],
+                coverage_summary=CoverageSummary(),
+                warnings=["no_search_provider_configured"],
+                search_rounds=[],
+            )
+
+        seen_urls: set[str] = set()
+        seen_doc_ids: set[str] = set()
+        all_documents: list[Document] = []
+        all_rounds: list[RetrievalRound] = []
+        warnings: list[str] = []
+        previous_doc_count = 0
+
+        for round_number in range(1, effective_max_rounds + 1):
+            queries = self._build_round_queries(plan, round_number, all_documents)
+            round_warnings: list[str] = []
+            round_results = self._run_search_round(queries, plan, round_warnings)
+
+            fetched_pages = 0
+            new_documents = 0
+            accepted_documents = 0
+
+            for result in round_results:
+                normalized_url = self._normalize_url(result.url)
+                if normalized_url in seen_urls:
+                    continue
+                seen_urls.add(normalized_url)
+
+                fetched = self._fetcher.fetch(result.url)
+                if not hasattr(fetched, "html"):
+                    round_warnings.append(f"{result.url}: {fetched.error_type}")
+                    continue
+                fetched_pages += 1
+
+                document = self._normalizer.normalize(fetched, plan, result)
+                if document.id in seen_doc_ids:
+                    continue
+                seen_doc_ids.add(document.id)
+                all_documents.append(document)
+                accepted_documents += 1
+                new_documents += 1
+
+            coverage = self._build_coverage_summary(all_documents, all_rounds + [], round_number, plan)
+            round_obj = RetrievalRound(
+                round_number=round_number,
+                queries=queries,
+                provider=self._provider.name,
+                discovered_results=len(round_results),
+                fetched_pages=fetched_pages,
+                accepted_documents=accepted_documents,
+                new_documents=new_documents,
+                warnings=round_warnings,
+            )
+            all_rounds.append(round_obj)
+            warnings.extend(round_warnings)
+            if self._should_stop(
+                all_documents,
+                coverage,
+                new_documents,
+                previous_doc_count,
+                round_number,
+                effective_max_rounds,
+                plan,
+            ):
+                break
+            previous_doc_count = len(all_documents)
+
+        scored_documents = self._score_documents(all_documents, plan)
+        selected_documents = [document for document, score in scored_documents if score > 0][:12]
+        if not selected_documents and scored_documents:
+            selected_documents = [document for document, _score in scored_documents[:8]]
+        selected_documents = self._source_profile_enricher.enrich_documents(selected_documents)
+        coverage = self._build_coverage_summary(selected_documents, all_rounds, len(all_rounds), plan)
+        return RetrievalPreview(
+            documents=selected_documents,
+            coverage_summary=coverage,
+            warnings=warnings,
+            search_rounds=all_rounds,
+        )
+
     def _retrieve_from_local_corpus(
         self,
         investigation_id: str,
@@ -273,6 +373,36 @@ class RetrieverAgent:
         self._repository.save_search_results(investigation_id, 1, search_results)
         live_store.save_batch(selected_documents)
         return result
+
+    def _preview_from_local_corpus(self, plan: InvestigationPlan) -> RetrievalPreview:
+        corpus = [
+            document.model_copy(deep=True)
+            for document in get_merged_documents(ALL_DOCUMENTS)
+        ]
+        scored_documents = self._score_documents(corpus, plan)
+        matched_documents = [
+            (document, score) for document, score in scored_documents if score > 0
+        ]
+        if not matched_documents:
+            matched_documents = scored_documents[:8]
+            warnings = [
+                "demo_mode_local_corpus:no strong lexical match found; using top local corpus documents",
+            ]
+        else:
+            warnings = [
+                "demo_mode_local_corpus:retrieval used the seeded/local document corpus",
+            ]
+
+        selected_pairs = matched_documents[:12]
+        selected_documents = [document for document, _score in selected_pairs]
+        selected_documents = self._source_profile_enricher.enrich_documents(selected_documents)
+        coverage = self._build_coverage_summary(selected_documents, [], 1, plan)
+        return RetrievalPreview(
+            documents=selected_documents,
+            coverage_summary=coverage,
+            warnings=warnings,
+            search_rounds=[],
+        )
 
     def _build_round_queries(
         self,

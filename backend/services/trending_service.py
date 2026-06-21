@@ -7,6 +7,7 @@ from uuid import uuid4
 from agents.discovery_agent import DiscoveryAgent
 from agents.model_client import MockModelClient
 from agents.planner_agent import plan_investigation
+from agents.retriever_agent import RetrieverAgent
 from config import get_settings
 from models.trending import (
     DiscoveryRunStats,
@@ -15,10 +16,15 @@ from models.trending import (
     TrendingInvestigationResponse,
     TrendingStatusResponse,
 )
+from services.investigation_repository import InvestigationRepository
 from services.search_provider import source_name_from_url
 from services.trending_ranker import TrendingRanker
 from services.trending_repository import TrendingRepository
 from services.trending_runtime import TrendingRuntimeStore
+
+_TRENDING_CANDIDATE_EXPANSION_LIMIT = 3
+_TRENDING_CANDIDATE_MIN_DOCS = 3
+_TRENDING_CANDIDATE_MIN_SOURCES = 2
 
 
 class TrendingService:
@@ -28,11 +34,15 @@ class TrendingService:
         repository: TrendingRepository,
         runtime_store: TrendingRuntimeStore,
         discovery_agent: DiscoveryAgent | None = None,
+        retriever_agent: RetrieverAgent | None = None,
     ) -> None:
         self._settings = get_settings()
         self._repository = repository
         self._runtime = runtime_store
         self._discovery = discovery_agent or DiscoveryAgent()
+        self._retriever = retriever_agent or RetrieverAgent(
+            InvestigationRepository(self._settings.INVESTIGATION_DB_PATH)
+        )
         self._ranker = TrendingRanker(
             min_docs=self._settings.TRENDING_MIN_DOCS,
             min_publishers=self._settings.TRENDING_MIN_PUBLISHERS,
@@ -40,7 +50,7 @@ class TrendingService:
         )
 
     def ensure_warm_async(self) -> None:
-        snapshot = self._repository.get_latest_snapshot()
+        snapshot = self._get_latest_snapshot()
         if snapshot is not None:
             return
         if not self._runtime.acquire_refresh_lock():
@@ -50,7 +60,7 @@ class TrendingService:
 
     def get_feed(self, *, limit: int = 10) -> TrendingFeedResponse:
         now = datetime.now(timezone.utc)
-        snapshot = self._repository.get_latest_snapshot()
+        snapshot = self._get_latest_snapshot()
         last_error = self._runtime.get_last_error()
 
         if snapshot is None:
@@ -90,7 +100,7 @@ class TrendingService:
         )
 
     def get_status(self) -> TrendingStatusResponse:
-        snapshot = self._repository.get_latest_snapshot()
+        snapshot = self._get_latest_snapshot()
         feed = self.get_feed(limit=1)
         return TrendingStatusResponse(
             state=feed.state,
@@ -112,7 +122,7 @@ class TrendingService:
         topic_id: str,
         investigation_repository,
     ) -> TrendingInvestigationResponse:
-        snapshot = self._repository.get_latest_snapshot()
+        snapshot = self._get_latest_snapshot()
         if snapshot is None:
             raise ValueError("No published trending snapshot is available.")
         topic = next((candidate for candidate in snapshot.topics if candidate.id == topic_id), None)
@@ -164,7 +174,7 @@ class TrendingService:
     def _refresh(self, *, is_reseed: bool) -> PublishedTrendingSnapshot:
         run_id = f"disc_{uuid4().hex}"
         prior_topics = []
-        previous = self._repository.get_latest_snapshot()
+        previous = self._get_latest_snapshot()
         if previous is not None:
             prior_topics = [topic.canonical_phrase for topic in previous.topics[:6]]
         queries = self._discovery.build_queries(prior_topics=prior_topics, is_reseed=is_reseed)
@@ -206,6 +216,17 @@ class TrendingService:
             }
         )
         documents = self._repository.list_discovery_documents()
+        expansion_stats, expansion_warnings = self._expand_top_candidates(run_id, documents)
+        stats = stats.model_copy(
+            update={
+                "query_count": stats.query_count + expansion_stats.query_count,
+                "result_count": stats.result_count + expansion_stats.result_count,
+                "fetched_pages": stats.fetched_pages + expansion_stats.fetched_pages,
+                "accepted_documents": stats.accepted_documents + expansion_stats.accepted_documents,
+                "duplicate_documents": stats.duplicate_documents + expansion_stats.duplicate_documents,
+            }
+        )
+        documents = self._repository.list_discovery_documents()
         topics = self._ranker.rank(documents, max_topics=self._settings.TRENDING_MAX_TOPICS)
         now = datetime.now(timezone.utc)
         snapshot = PublishedTrendingSnapshot(
@@ -218,10 +239,66 @@ class TrendingService:
             warning=None if topics else "Discovery run completed but no topics cleared the publish thresholds yet.",
             topics=topics,
         )
-        self._repository.complete_run(run_id, stats=stats, warnings=batch.warnings)
+        self._repository.complete_run(run_id, stats=stats, warnings=[*batch.warnings, *expansion_warnings])
         self._repository.save_snapshot(snapshot)
+        self._runtime.set_latest_snapshot(snapshot)
         self._runtime.set_last_error(None)
         return snapshot
+
+    def _get_latest_snapshot(self) -> PublishedTrendingSnapshot | None:
+        snapshot = self._runtime.get_latest_snapshot()
+        if snapshot is not None:
+            return snapshot
+
+        snapshot = self._repository.get_latest_snapshot()
+        if snapshot is not None:
+            self._runtime.set_latest_snapshot(snapshot)
+        return snapshot
+
+    def _expand_top_candidates(
+        self,
+        run_id: str,
+        documents,
+    ) -> tuple[DiscoveryRunStats, list[str]]:
+        candidate_phrases = self._ranker.extract_candidate_phrases(documents, top_n=8)
+        stats = DiscoveryRunStats()
+        warnings: list[str] = []
+
+        for phrase in candidate_phrases[:_TRENDING_CANDIDATE_EXPANSION_LIMIT]:
+            plan = plan_investigation(
+                f"Trace the narrative around {phrase}",
+                prior_context={"canonical_phrase": phrase, "topic_seed": phrase},
+                model_client=MockModelClient(),
+            )
+            preview = self._retriever.expand_candidate(plan, max_rounds=2)
+            stats.query_count += sum(len(round_item.queries) for round_item in preview.search_rounds)
+            stats.result_count += sum(round_item.discovered_results for round_item in preview.search_rounds)
+            stats.fetched_pages += sum(round_item.fetched_pages for round_item in preview.search_rounds)
+            warnings.extend(f"candidate:{phrase}:{warning}" for warning in preview.warnings[:6])
+
+            if (
+                preview.coverage_summary.total_documents < _TRENDING_CANDIDATE_MIN_DOCS
+                or preview.coverage_summary.unique_sources < _TRENDING_CANDIDATE_MIN_SOURCES
+            ):
+                continue
+
+            for document in preview.documents:
+                provider = str((document.metadata or {}).get("provider") or "retriever")
+                search_query = str((document.metadata or {}).get("search_query") or phrase)
+                _record, created = self._repository.save_discovery_document(
+                    run_id,
+                    document,
+                    canonical_url=self._normalize_url(document.url),
+                    domain=source_name_from_url(document.url),
+                    provider=provider,
+                    search_query=search_query,
+                )
+                if created:
+                    stats.accepted_documents += 1
+                else:
+                    stats.duplicate_documents += 1
+
+        return stats, warnings
 
     def _needs_reseed(self, snapshot: PublishedTrendingSnapshot, now: datetime) -> bool:
         if snapshot.last_reseed_at is None:

@@ -8,6 +8,13 @@ from urllib.parse import urlparse
 from models.trending import DiscoveryDocumentRecord, TopicTimelinePoint, TrendingTopic
 from services.phrase_extractor import extract_top_phrases
 
+_GENERIC_TOPIC_TOKENS = {
+    "analysis", "article", "articles", "breaking", "coverage", "debate",
+    "debates", "latest", "live", "narrative", "narratives", "news",
+    "opinion", "political", "politics", "story", "stories", "topic", "topics",
+    "update", "updates",
+}
+
 
 def _topic_id(phrase: str) -> str:
     return "topic_" + hashlib.md5(phrase.encode()).hexdigest()[:10]
@@ -37,20 +44,14 @@ class TrendingRanker:
         if not live_docs:
             return []
 
-        texts = [
-            " ".join(
-                part for part in [doc.document.title, doc.document.snippet or "", " ".join(doc.document.phrases or [])] if part
-            )
-            for doc in live_docs
-        ]
-        phrases = extract_top_phrases(texts, ngram_range=(2, 4), top_n=150, min_doc_freq=2)
-        if not phrases:
-            phrases = self._fallback_phrases(live_docs)
+        phrases = self._extract_ranked_phrases(live_docs)
 
         selected_topics: list[TrendingTopic] = []
         seen_phrases: set[str] = set()
         for phrase, _count in phrases:
             normalized = phrase.lower().strip()
+            if not self._is_publishable_phrase(normalized):
+                continue
             if not normalized or any(normalized in seen or seen in normalized for seen in seen_phrases):
                 continue
             matched = self._match_docs(normalized, live_docs)
@@ -114,6 +115,34 @@ class TrendingRanker:
         selected_topics.sort(key=lambda topic: (topic.velocity_score, topic.confidence_score, topic.source_count), reverse=True)
         return selected_topics[:max_topics]
 
+    def extract_candidate_phrases(
+        self,
+        documents: list[DiscoveryDocumentRecord],
+        *,
+        top_n: int = 8,
+        min_doc_freq: int = 2,
+    ) -> list[str]:
+        live_docs = [doc for doc in documents if doc.document.published_at or doc.latest_seen_at]
+        if not live_docs:
+            return []
+
+        selected: list[str] = []
+        seen_phrases: set[str] = set()
+        for phrase, _count in self._extract_ranked_phrases(live_docs, top_n=max(top_n * 3, 24), min_doc_freq=min_doc_freq):
+            normalized = phrase.lower().strip()
+            if not self._is_publishable_phrase(normalized):
+                continue
+            if any(normalized in seen or seen in normalized for seen in seen_phrases):
+                continue
+            matched = self._match_docs(normalized, live_docs)
+            if len(matched) < min_doc_freq:
+                continue
+            selected.append(normalized)
+            seen_phrases.add(normalized)
+            if len(selected) >= top_n:
+                break
+        return selected
+
     def _fallback_phrases(self, documents: list[DiscoveryDocumentRecord]) -> list[tuple[str, int]]:
         counts: Counter[str] = Counter()
         for record in documents:
@@ -122,6 +151,24 @@ class TrendingRanker:
                 if 2 <= len(phrase.split()) <= 4:
                     counts[phrase.lower()] += 1
         return counts.most_common(50)
+
+    def _extract_ranked_phrases(
+        self,
+        documents: list[DiscoveryDocumentRecord],
+        *,
+        top_n: int = 150,
+        min_doc_freq: int = 2,
+    ) -> list[tuple[str, int]]:
+        texts = [
+            " ".join(
+                part for part in [doc.document.title, " ".join((doc.document.phrases or [])[:4])] if part
+            )
+            for doc in documents
+        ]
+        phrases = extract_top_phrases(texts, ngram_range=(2, 4), top_n=top_n, min_doc_freq=min_doc_freq)
+        if not phrases:
+            phrases = self._fallback_phrases(documents)
+        return phrases
 
     def _match_docs(self, phrase: str, documents: list[DiscoveryDocumentRecord]) -> list[DiscoveryDocumentRecord]:
         matched: list[DiscoveryDocumentRecord] = []
@@ -238,4 +285,12 @@ class TrendingRanker:
 
     def _title_case_phrase(self, phrase: str) -> str:
         return " ".join(token.capitalize() for token in phrase.split())
+
+    def _is_publishable_phrase(self, phrase: str) -> bool:
+        tokens = phrase.split()
+        if len(tokens) < 2:
+            return False
+        if len(set(tokens)) == 1:
+            return False
+        return any(token not in _GENERIC_TOPIC_TOKENS for token in tokens)
 

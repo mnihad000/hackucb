@@ -31,6 +31,7 @@ _COMMENTARY_DOMAINS = {
     "jacobin.com", "federalist.com", "breitbart.com", "dailykos.com",
 }
 _TAG_RE = re.compile(r"<[^>]+>")
+_PHRASE_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9'\-]{2,}")
 
 
 class DocumentNormalizer:
@@ -149,13 +150,15 @@ class DocumentNormalizer:
 
     def _extract_phrases(self, title: str, search_result: SearchResult, plan: InvestigationPlan) -> list[str]:
         phrases: list[str] = []
-        if plan.canonical_phrase:
+        if plan.canonical_phrase and len(plan.canonical_phrase.split()) >= 2:
             phrases.append(plan.canonical_phrase.lower())
-        words = title.lower().split()
-        for index in range(len(words) - 1):
-            phrases.append(f"{words[index]} {words[index + 1]}")
-        if search_result.snippet:
-            phrases.append(search_result.snippet.lower()[:120])
+        words = _PHRASE_TOKEN_RE.findall(title.lower())
+        for n in (2, 3):
+            for index in range(len(words) - n + 1):
+                candidate_words = words[index : index + n]
+                if len(set(candidate_words)) == 1:
+                    continue
+                phrases.append(" ".join(candidate_words))
         deduped: list[str] = []
         seen: set[str] = set()
         for phrase in phrases:

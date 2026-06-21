@@ -6,39 +6,30 @@ import { Waves } from "../components/ui/wave-background";
 import {
   ApiError,
   getInvestigationWorkspace,
-  runAgentDebate,
-  runAnalyst,
-  runClaimCounterpoints,
-  runCounterNarratives,
-  runNarrativeFamily,
-  runReport,
-  runReceipts,
-  runRetrieval,
-  runSourceDiversity,
-  runTimeline,
+  runInvestigation,
 } from "../lib/api";
 import {
   buildInvestigationExperienceFromWorkspace,
-  formatClaimConfidence,
-  getCoverageHighlights,
-  getLimitations,
+  getClaimLedgerEntries,
+  getOpenGaps,
+  getPassHistory,
+  getResolvedGaps,
+  getRetryHistory,
   getRecommendedChecks,
-  getSearchWarnings,
-  getSourceDiversityCaveat,
-  getSourceDiversityFindings,
-  getSourceDiversityHighlights,
   getStageLabel,
-  getTopClaims,
 } from "../lib/liveInvestigation";
-import type { LiveInvestigationWorkspace, LiveSourceDiversityResult } from "../types/rhetoriq";
+import {
+  getMockInvestigationWorkspace,
+  isMockInvestigationRequest,
+} from "../lib/mockInvestigation";
+import type { LiveInvestigationWorkspace } from "../types/rhetoriq";
 
 export default function InvestigationPage() {
   const { id = "" } = useParams();
   const [searchParams] = useSearchParams();
   const query = searchParams.get("q") ?? undefined;
+  const isMockRequest = isMockInvestigationRequest(id, searchParams);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isRunningPipeline, setIsRunningPipeline] = useState(false);
   const [isNotFound, setIsNotFound] = useState(false);
   const [workspace, setWorkspace] = useState<LiveInvestigationWorkspace | null>(null);
 
@@ -46,8 +37,6 @@ export default function InvestigationPage() {
     if (!id) {
       setWorkspace(null);
       setErrorMessage(null);
-      setIsLoading(false);
-      setIsRunningPipeline(false);
       setIsNotFound(true);
       return;
     }
@@ -55,11 +44,22 @@ export default function InvestigationPage() {
     let cancelled = false;
 
     async function hydrateLiveInvestigation() {
-      setIsLoading(true);
       setErrorMessage(null);
       setIsNotFound(false);
 
       try {
+        if (isMockRequest) {
+          const nextWorkspace = getMockInvestigationWorkspace(id, query);
+          if (cancelled) {
+            return;
+          }
+
+          startTransition(() => {
+            setWorkspace(nextWorkspace);
+          });
+          return;
+        }
+
         let nextWorkspace = await getInvestigationWorkspace(id);
         if (cancelled) {
           return;
@@ -69,118 +69,8 @@ export default function InvestigationPage() {
           setWorkspace(nextWorkspace);
         });
 
-        if (!nextWorkspace.retrieval) {
-          setIsRunningPipeline(true);
-          await runRetrieval(id);
-          nextWorkspace = await getInvestigationWorkspace(id);
-          if (cancelled) {
-            return;
-          }
-          startTransition(() => {
-            setWorkspace(nextWorkspace);
-          });
-        }
-
-        if (!nextWorkspace.source_diversity) {
-          setIsRunningPipeline(true);
-          await runSourceDiversity(id);
-          nextWorkspace = await getInvestigationWorkspace(id);
-          if (cancelled) {
-            return;
-          }
-          startTransition(() => {
-            setWorkspace(nextWorkspace);
-          });
-        }
-
-        if (!nextWorkspace.timeline) {
-          setIsRunningPipeline(true);
-          await runTimeline(id);
-          nextWorkspace = await getInvestigationWorkspace(id);
-          if (cancelled) {
-            return;
-          }
-          startTransition(() => {
-            setWorkspace(nextWorkspace);
-          });
-        }
-
-        if (!nextWorkspace.counter_narratives) {
-          setIsRunningPipeline(true);
-          await runCounterNarratives(id);
-          nextWorkspace = await getInvestigationWorkspace(id);
-          if (cancelled) {
-            return;
-          }
-          startTransition(() => {
-            setWorkspace(nextWorkspace);
-          });
-        }
-
-        if (!nextWorkspace.narrative_family) {
-          setIsRunningPipeline(true);
-          await runNarrativeFamily(id);
-          nextWorkspace = await getInvestigationWorkspace(id);
-          if (cancelled) {
-            return;
-          }
-          startTransition(() => {
-            setWorkspace(nextWorkspace);
-          });
-        }
-
-        if (!nextWorkspace.analyst) {
-          setIsRunningPipeline(true);
-          await runAnalyst(id);
-          nextWorkspace = await getInvestigationWorkspace(id);
-          if (cancelled) {
-            return;
-          }
-          startTransition(() => {
-            setWorkspace(nextWorkspace);
-          });
-        }
-
-        if (!nextWorkspace.claim_counterpoints) {
-          setIsRunningPipeline(true);
-          await runClaimCounterpoints(id);
-          nextWorkspace = await getInvestigationWorkspace(id);
-          if (cancelled) {
-            return;
-          }
-          startTransition(() => {
-            setWorkspace(nextWorkspace);
-          });
-        }
-
-        if (!nextWorkspace.receipts) {
-          setIsRunningPipeline(true);
-          await runReceipts(id);
-          nextWorkspace = await getInvestigationWorkspace(id);
-          if (cancelled) {
-            return;
-          }
-          startTransition(() => {
-            setWorkspace(nextWorkspace);
-          });
-        }
-
-        if (!nextWorkspace.agent_debate) {
-          setIsRunningPipeline(true);
-          await runAgentDebate(id);
-          nextWorkspace = await getInvestigationWorkspace(id);
-          if (cancelled) {
-            return;
-          }
-          startTransition(() => {
-            setWorkspace(nextWorkspace);
-          });
-        }
-
-        if (!nextWorkspace.report) {
-          setIsRunningPipeline(true);
-          await runReport(id);
-          nextWorkspace = await getInvestigationWorkspace(id);
+        if (!nextWorkspace.research_loop || !nextWorkspace.report) {
+          nextWorkspace = await runInvestigation(id);
           if (cancelled) {
             return;
           }
@@ -202,11 +92,6 @@ export default function InvestigationPage() {
             );
           }
         }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-          setIsRunningPipeline(false);
-        }
       }
     }
 
@@ -215,20 +100,18 @@ export default function InvestigationPage() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, isMockRequest, query, searchParams]);
 
   const experience = workspace
     ? buildInvestigationExperienceFromWorkspace(workspace)
     : null;
-  const coverageHighlights = workspace ? getCoverageHighlights(workspace) : [];
-  const limitations = workspace ? getLimitations(workspace) : [];
   const recommendedChecks = workspace ? getRecommendedChecks(workspace) : [];
-  const searchWarnings = workspace ? getSearchWarnings(workspace) : [];
-  const topClaims = workspace ? getTopClaims(workspace) : [];
   const stageLabel = workspace ? getStageLabel(workspace) : null;
-  const sourceDiversityHighlights = workspace ? getSourceDiversityHighlights(workspace) : [];
-  const sourceDiversityFindings = workspace ? getSourceDiversityFindings(workspace) : [];
-  const sourceDiversityCaveat = workspace ? getSourceDiversityCaveat(workspace.source_diversity) : null;
+  const passHistory = workspace ? getPassHistory(workspace) : [];
+  const retryHistory = workspace ? getRetryHistory(workspace) : [];
+  const openGaps = workspace ? getOpenGaps(workspace) : [];
+  const resolvedGaps = workspace ? getResolvedGaps(workspace) : [];
+  const claimLedger = workspace ? getClaimLedgerEntries(workspace) : [];
 
   return (
     <main className="investigation-page min-h-screen bg-white">
@@ -304,75 +187,35 @@ export default function InvestigationPage() {
             <LoadingHero query={query} />
           )}
 
-          {!isNotFound ? (
-            <PipelineStatusCard
-              errorMessage={errorMessage}
-              isLoading={isLoading}
-              isRunningPipeline={isRunningPipeline}
-              stageLabel={stageLabel}
-            />
-          ) : null}
-
-          {experience ? (
-            <div className="rounded-[2rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.86)] p-7 shadow-[0_38px_68px_-46px_rgba(19,35,58,0.4)] backdrop-blur-xl sm:p-8">
-              <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                <div className="max-w-4xl">
-                  <p className="eyebrow">Executive summary</p>
-                  <p className="mt-5 text-lg leading-8 text-[var(--ink)]">
-                    {experience.summary}
-                  </p>
-                </div>
-                <div className="rounded-[1.5rem] border border-[rgba(19,35,58,0.08)] bg-white/88 p-5 lg:max-w-[20rem]">
-                  <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
-                    Cautious framing
-                  </p>
-                  <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-                    RhetoriQ shows first observed sources, spread patterns, and competing
-                    frames. It does not assign truth scores or claim coordination without
-                    evidence.
-                  </p>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
           {workspace ? (
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(18rem,24rem)]">
               <div className="space-y-6">
-                {experience ? <InvestigationFlowchart data={experience.flowchartData} /> : null}
-                {workspace.timeline ? <TimelineCard timeline={workspace.timeline} /> : null}
-                {workspace.narrative_family ? (
-                  <NarrativeFamilyCard
-                    family={workspace.narrative_family}
-                    documents={workspace.retrieved_documents}
-                  />
+                <InvestigationBriefCard workspace={workspace} />
+                <InvestigationFlowchart
+                  data={experience?.flowchartData}
+                  isLoading={
+                    !experience ||
+                    (!isMockRequest &&
+                      !workspace?.report &&
+                      !workspace?.research_loop)
+                  }
+                />
+                {workspace.research_loop ? (
+                  <ResearchLoopCard workspace={workspace} />
                 ) : null}
-                {topClaims.length > 0 ? <ClaimsCard claims={topClaims} /> : null}
               </div>
               <div className="space-y-6">
                 {workspace.agent_debate ? (
                   <AgentDebateCard debate={workspace.agent_debate} />
                 ) : null}
-                {coverageHighlights.length > 0 ? (
-                  <InfoCard title="Coverage">
-                    {coverageHighlights.map((item) => (
-                      <InfoPill key={item} value={item} />
-                    ))}
-                  </InfoCard>
+                {workspace.provenance_trace ? (
+                  <ProvenanceCard workspace={workspace} />
                 ) : null}
-                {workspace.source_diversity ? (
-                  <InfoCard title="Source Diversity">
-                    {sourceDiversityHighlights.map((item) => (
-                      <InfoPill key={item} value={item} />
-                    ))}
-                    {formatDistributionRows(workspace.source_diversity).map((item) => (
-                      <InfoListItem key={item} value={item} />
-                    ))}
-                    {sourceDiversityFindings.map((item) => (
-                      <InfoListItem key={item.id} value={`${item.label}: ${item.detail}`} />
-                    ))}
-                    {sourceDiversityCaveat ? <InfoListItem value={sourceDiversityCaveat} /> : null}
-                  </InfoCard>
+                {openGaps.length > 0 || resolvedGaps.length > 0 ? (
+                  <GapsCard openGaps={openGaps} resolvedGaps={resolvedGaps} />
+                ) : null}
+                {claimLedger.length > 0 ? (
+                  <ClaimLedgerCard entries={claimLedger} />
                 ) : null}
                 {recommendedChecks.length > 0 ? (
                   <InfoCard title="Recommended Human Checks">
@@ -381,17 +224,19 @@ export default function InvestigationPage() {
                     ))}
                   </InfoCard>
                 ) : null}
-                {limitations.length > 0 ? (
-                  <InfoCard title="Limitations">
-                    {limitations.map((item) => (
-                      <InfoListItem key={item} value={item} />
+                {passHistory.length > 0 ? (
+                  <InfoCard title="Pass History">
+                    {passHistory.map((item) => (
+                      <InfoListItem
+                        key={`pass-${item.pass_number}`}
+                        value={`Pass ${item.pass_number}: ${item.lanes_run.join(", ")} | skeptic ${item.skeptic_decision ?? "n/a"} | open gaps ${item.gaps_opened.length}`}
+                      />
                     ))}
-                  </InfoCard>
-                ) : null}
-                {searchWarnings.length > 0 ? (
-                  <InfoCard title="Retriever Warnings">
-                    {searchWarnings.map((item) => (
-                      <InfoListItem key={item} value={item} />
+                    {retryHistory.map((item, index) => (
+                      <InfoListItem
+                        key={`retry-${item.pass_number}-${index}`}
+                        value={`Retry ${item.pass_number}: ${item.lane} because ${item.reason}`}
+                      />
                     ))}
                   </InfoCard>
                 ) : null}
@@ -458,285 +303,162 @@ function InvestigationNotFoundCard({
   );
 }
 
-function PipelineStatusCard({
-  errorMessage,
-  isLoading,
-  isRunningPipeline,
-  stageLabel,
+function InvestigationBriefCard({
+  workspace,
 }: {
-  errorMessage: string | null;
-  isLoading: boolean;
-  isRunningPipeline: boolean;
-  stageLabel: string | null;
+  workspace: LiveInvestigationWorkspace;
 }) {
-  if (!isLoading && !isRunningPipeline && !errorMessage) {
+  const plan = workspace.plan;
+  if (!plan) {
     return null;
   }
 
   return (
-    <div className="rounded-[1.6rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.9)] p-5 shadow-[0_28px_55px_-42px_rgba(19,35,58,0.34)]">
-      <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
-        Live pipeline
-      </p>
-      <p className="mt-3 text-base leading-7 text-[var(--ink)]">
-        {errorMessage
-          ? errorMessage
-          : isRunningPipeline
-            ? `Advancing backend stages. ${stageLabel ?? "Investigation in progress."}`
-            : "Loading persisted investigation state."}
-      </p>
-    </div>
-  );
-}
-
-function ClaimsCard({
-  claims,
-}: {
-  claims: NonNullable<LiveInvestigationWorkspace["report"]>["key_claims"];
-}) {
-  return (
-    <div className="rounded-[2rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.86)] p-7 shadow-[0_38px_68px_-46px_rgba(19,35,58,0.4)] backdrop-blur-xl sm:p-8">
-      <p className="eyebrow">Key claims</p>
-      <div className="mt-5 space-y-4">
-        {claims.slice(0, 4).map((claim) => (
-          <article
-            key={claim.claim_id}
-            className="rounded-[1.4rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5"
-          >
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="data-pill">{claim.claim_type}</span>
-              <span className="data-pill">{formatClaimConfidence(claim)}</span>
-              {claim.support_status ? (
-                <span className="data-pill">{claim.support_status.replaceAll("_", " ")}</span>
-              ) : null}
-              {claim.verification_state ? (
-                <span className="data-pill">{claim.verification_state.replaceAll("_", " ")}</span>
-              ) : null}
-            </div>
-            <p className="mt-4 text-base leading-7 text-[var(--ink)]">{claim.claim_text}</p>
-            {claim.support_summary ? (
-              <p className="mt-3 text-sm leading-6 text-[var(--muted)]">{claim.support_summary}</p>
-            ) : null}
-            {claim.counterpoint_summary ? (
-              <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-                Counterpoint: {claim.counterpoint_summary}
-              </p>
-            ) : null}
-            {claim.citations[0] ? (
-              <a
-                className="mt-4 inline-flex text-sm font-semibold text-[var(--accent)] transition hover:text-[#627997]"
-                href={claim.citations[0].url}
-                rel="noreferrer"
-                target="_blank"
-              >
-                {claim.citations[0].source_name}
-              </a>
-            ) : null}
-          </article>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function TimelineCard({
-  timeline,
-}: {
-  timeline: NonNullable<LiveInvestigationWorkspace["timeline"]>;
-}) {
-  return (
     <div className="rounded-[2rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.86)] p-7 shadow-[0_38px_68px_-46px_rgba(19,35,58,0.4)] backdrop-blur-xl sm:p-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="eyebrow">Timeline</p>
-          <p className="mt-4 max-w-3xl text-base leading-7 text-[var(--muted)]">
-            {timeline.timeline_summary}
+          <p className="eyebrow">Investigation brief</p>
+          <p className="mt-4 text-lg leading-8 text-[var(--ink)]">
+            {plan.primary_question ?? workspace.query_text}
           </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <span className="data-pill">{timeline.confidence_label} confidence</span>
-          <span className="data-pill">{timeline.timeline_events.length} events</span>
-        </div>
-      </div>
-
-      <div className="mt-6 space-y-4">
-        {timeline.timeline_events.slice(0, 6).map((event) => (
-          <article
-            key={event.id}
-            className="rounded-[1.35rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5"
-          >
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="data-pill">{event.event_type.replaceAll("_", " ")}</span>
-              <span className="data-pill">{event.narrative_side}</span>
-            </div>
-            <h3 className="mt-4 text-lg font-semibold tracking-[-0.03em] text-[var(--ink)]">
-              {event.title}
-            </h3>
-            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-              {formatTimestamp(event.timestamp)} · {event.source_name}
-            </p>
-            <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{event.explanation}</p>
-            {event.snippet ? (
-              <p className="mt-3 rounded-[1rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(245,247,250,0.9)] px-4 py-3 text-sm leading-6 text-[var(--muted)]">
-                {event.snippet}
-              </p>
-            ) : null}
-          </article>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function NarrativeFamilyCard({
-  family,
-  documents,
-}: {
-  family: NonNullable<LiveInvestigationWorkspace["narrative_family"]>;
-  documents: LiveInvestigationWorkspace["retrieved_documents"];
-}) {
-  const documentMap = new Map(documents.map((document) => [document.id, document]));
-  const fastest = family.fastest_growing_child;
-  const broadest = family.broadest_source_diversity_child;
-  const activeBranchId = family.active_branch_id;
-
-  return (
-    <div className="rounded-[2rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.86)] p-7 shadow-[0_38px_68px_-46px_rgba(19,35,58,0.4)] backdrop-blur-xl sm:p-8">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="eyebrow">Narrative family</p>
-          <h2 className="mt-4 text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
-            {family.family_title}
-          </h2>
-          <p className="mt-3 text-base leading-7 text-[var(--muted)]">
-            {family.summary}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <span className="data-pill">{family.confidence_label} confidence</span>
-          <span className="data-pill">{family.child_narratives.length} branches</span>
-          <span className="data-pill">{family.generation_method.replaceAll("_", " ")}</span>
-        </div>
-      </div>
-
-      <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-        <div className="rounded-[1.4rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5">
-          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
-            Parent frame
-          </p>
-          <p className="mt-3 text-lg font-semibold text-[var(--ink)]">{family.parent_frame}</p>
           <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-            RhetoriQ maps semantic framing and mutation patterns in the retrieved corpus.
-            It does not treat family placement as proof of coordination or truth.
+            Intent: {plan.intent} {"·"} Retrieval mode: {plan.retrieval_mode}
           </p>
         </div>
-
-        <div className="rounded-[1.4rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
-              Mutation rail
-            </p>
-            <span className="data-pill">{family.mutation_trail.length} steps</span>
-          </div>
-          <p className="mt-3 text-sm leading-6 text-[var(--ink)]">
-            {family.mutation_summary || "No strong phrase evolution chain was isolated for this branch."}
-          </p>
-          {family.mutation_trail.length > 0 ? (
-            <div className="mt-4 space-y-3">
-              {family.mutation_trail.map((step) => {
-                const fromDoc = documentMap.get(step.from_doc_id);
-                const toDoc = documentMap.get(step.to_doc_id);
-                return (
-                  <article
-                    key={`${step.from_doc_id}-${step.to_doc_id}-${step.from_phrase}-${step.to_phrase}`}
-                    className="rounded-[1.1rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(245,247,250,0.94)] p-4"
-                  >
-                    <div className="flex flex-wrap items-center gap-2 text-sm">
-                      <span className="data-pill">{step.mutation_type.replaceAll("_", " ")}</span>
-                      <span className="data-pill">{Math.round(step.similarity_score * 100)}% match</span>
-                      <span className="data-pill">{Math.round(step.time_delta_hours)}h later</span>
-                      {step.source_shift ? <span className="data-pill">source shift</span> : null}
-                    </div>
-                    <p className="mt-4 text-base font-semibold leading-7 text-[var(--ink)]">
-                      {step.from_phrase} {"->"} {step.to_phrase}
-                    </p>
-                    <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                      {fromDoc ? `${fromDoc.source_name} -> ` : ""}
-                      {toDoc ? toDoc.source_name : "later source"}
-                    </p>
-                    <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{step.explanation}</p>
-                  </article>
-                );
-              })}
-            </div>
-          ) : null}
+        <div className="flex flex-wrap gap-2">
+          {plan.retrieval_lanes.map((lane) => (
+            <span key={lane} className="data-pill">
+              {lane}
+            </span>
+          ))}
         </div>
       </div>
 
-      <div className="mt-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
-            Branches
-          </p>
-          {activeBranchId ? <span className="data-pill">active branch highlighted</span> : null}
+      {plan.subquestions.length > 0 ? (
+        <div className="mt-6 space-y-3">
+          {plan.subquestions.map((item) => (
+            <p
+              key={item}
+              className="rounded-[1rem] border border-[rgba(19,35,58,0.08)] bg-white/90 px-4 py-3 text-sm leading-7 text-[var(--ink)]"
+            >
+              {item}
+            </p>
+          ))}
         </div>
+      ) : null}
+    </div>
+  );
+}
 
-        <div className="mt-4 space-y-4">
-          {family.child_narratives.map((child) => {
-            const firstObservedDoc = child.first_observed_doc_id
-              ? documentMap.get(child.first_observed_doc_id)
-              : null;
-            const isActive = child.id === activeBranchId;
-            return (
-              <article
-                key={child.id}
-                className={`rounded-[1.35rem] border bg-white/92 p-5 ${
-                  isActive
-                    ? "border-[rgba(160,106,46,0.32)] shadow-[0_24px_44px_-34px_rgba(160,106,46,0.34)]"
-                    : "border-[rgba(19,35,58,0.08)]"
-                }`}
-              >
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="data-pill">{describeBranchType(child.branch_type)}</span>
-                  <span className="data-pill">{child.growth_status}</span>
-                  {isActive ? <span className="data-pill">active branch</span> : null}
-                  {child.id === fastest ? <span className="data-pill">fastest growing</span> : null}
-                  {child.id === broadest ? <span className="data-pill">broadest sources</span> : null}
-                </div>
-                <h3 className="mt-4 text-lg font-semibold tracking-[-0.03em] text-[var(--ink)]">
-                  {child.title}
-                </h3>
-                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                  {child.relationship_to_parent}
-                </p>
-                <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{child.branch_summary}</p>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <span className="data-pill">{child.source_count} sources</span>
-                  <span className="data-pill">{child.source_type_count} source types</span>
-                  {firstObservedDoc ? (
-                    <span className="data-pill">
-                      first observed: {firstObservedDoc.source_name}
-                    </span>
-                  ) : null}
-                </div>
-                {child.related_phrases.length > 0 ? (
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {child.related_phrases.map((phrase) => (
-                      <span
-                        key={`${child.id}-${phrase}`}
-                        className="rounded-full border border-[rgba(19,35,58,0.08)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]"
-                      >
-                        {phrase}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-              </article>
-            );
-          })}
+function ResearchLoopCard({
+  workspace,
+}: {
+  workspace: LiveInvestigationWorkspace;
+}) {
+  const loop = workspace.research_loop;
+  if (!loop) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-[2rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.86)] p-7 shadow-[0_38px_68px_-46px_rgba(19,35,58,0.4)] backdrop-blur-xl sm:p-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="eyebrow">Research loop</p>
+          <p className="mt-4 text-base leading-7 text-[var(--muted)]">
+            Final decision: {loop.final_decision.replaceAll("_", " ")}
+          </p>
         </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="data-pill">{loop.pass_history.length} pass(es)</span>
+          <span className="data-pill">{loop.evidence_budget.documents_fetched} docs</span>
+          <span className="data-pill">{loop.evidence_budget.retries_used} retries</span>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-3 sm:grid-cols-2">
+        <InfoPill value={`Coverage ${Math.round(loop.confidence_dimensions.coverage_confidence.score * 100)}%`} />
+        <InfoPill value={`Chronology ${Math.round(loop.confidence_dimensions.chronology_confidence.score * 100)}%`} />
+        <InfoPill value={`Contradiction ${Math.round(loop.confidence_dimensions.contradiction_confidence.score * 100)}%`} />
+        <InfoPill value={`Provenance ${Math.round(loop.confidence_dimensions.provenance_confidence.score * 100)}%`} />
+        <InfoPill value={`Verification ${Math.round(loop.confidence_dimensions.verification_confidence.score * 100)}%`} />
+        <InfoPill value={`Synthesis ${Math.round(loop.confidence_dimensions.synthesis_confidence.score * 100)}%`} />
       </div>
     </div>
+  );
+}
+
+function ProvenanceCard({
+  workspace,
+}: {
+  workspace: LiveInvestigationWorkspace;
+}) {
+  const provenance = workspace.provenance_trace;
+  if (!provenance) {
+    return null;
+  }
+
+  return (
+    <InfoCard title="Provenance">
+      <InfoListItem value={provenance.earliest_anchor_summary} />
+      {provenance.likely_upstream_source ? (
+        <InfoListItem value={`Likely upstream source: ${provenance.likely_upstream_source}`} />
+      ) : null}
+      {Object.entries(provenance.duplicate_clusters).map(([clusterId, docIds]) => (
+        <InfoListItem
+          key={clusterId}
+          value={`Duplicate cluster ${clusterId}: ${docIds.length} related document(s)`}
+        />
+      ))}
+      {provenance.trace_nodes.slice(0, 4).map((node) => (
+        <InfoListItem
+          key={`${node.document_id}-${node.role}`}
+          value={`${node.role.replaceAll("_", " ")}: ${node.source_name}${node.citation_hint ? ` (${node.citation_hint})` : ""}`}
+        />
+      ))}
+    </InfoCard>
+  );
+}
+
+function GapsCard({
+  openGaps,
+  resolvedGaps,
+}: {
+  openGaps: NonNullable<LiveInvestigationWorkspace["gap_ledger"]>["entries"];
+  resolvedGaps: NonNullable<LiveInvestigationWorkspace["gap_ledger"]>["entries"];
+}) {
+  return (
+    <InfoCard title="Evidence Gaps">
+      {openGaps.map((gap) => (
+        <InfoListItem
+          key={gap.gap_id}
+          value={`Open ${gap.severity} ${gap.gap_type.replaceAll("_", " ")} gap: ${gap.summary}`}
+        />
+      ))}
+      {resolvedGaps.map((gap) => (
+        <InfoListItem
+          key={gap.gap_id}
+          value={`Resolved ${gap.gap_type.replaceAll("_", " ")} gap${gap.resolved_in_pass ? ` in pass ${gap.resolved_in_pass}` : ""}: ${gap.summary}`}
+        />
+      ))}
+    </InfoCard>
+  );
+}
+
+function ClaimLedgerCard({
+  entries,
+}: {
+  entries: NonNullable<LiveInvestigationWorkspace["claim_ledger"]>["entries"];
+}) {
+  return (
+    <InfoCard title="Claim Ledger">
+      {entries.slice(0, 8).map((entry) => (
+        <InfoListItem
+          key={entry.claim_id}
+          value={`${entry.state.replaceAll("_", " ")}: ${entry.claim_text}`}
+        />
+      ))}
+    </InfoCard>
   );
 }
 
@@ -870,37 +592,4 @@ function MetricCard({ label, value }: { label: string; value: string }) {
       <p className="mt-2 text-sm font-semibold leading-6 text-[var(--ink)]">{value}</p>
     </div>
   );
-}
-
-function formatDistributionRows(diversity: LiveSourceDiversityResult) {
-  return [
-    formatDistributionLine("Source types", diversity.source_type_distribution),
-    formatDistributionLine("Geography", diversity.geographic_distribution),
-    formatDistributionLine("Institutions", diversity.institution_distribution),
-    formatDistributionLine("Content forms", diversity.content_form_distribution),
-  ].filter(Boolean) as string[];
-}
-
-function formatDistributionLine(label: string, distribution: Record<string, number>) {
-  const entries = Object.entries(distribution)
-    .filter(([, count]) => count > 0)
-    .sort((left, right) => right[1] - left[1]);
-  if (entries.length === 0) {
-    return "";
-  }
-  const summary = entries
-    .map(([key, count]) => `${key.replaceAll("_", " ")}: ${count}`)
-    .join(", ");
-  return `${label}: ${summary}`;
-}
-
-function describeBranchType(value: "main" | "counter" | "related" | "mutation") {
-  return value.replaceAll("_", " ");
-}
-
-function formatTimestamp(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
 }

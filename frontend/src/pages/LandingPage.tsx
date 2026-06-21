@@ -1,5 +1,7 @@
 import {
   forwardRef,
+  startTransition,
+  useEffect,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -16,9 +18,14 @@ import {
   type Variants,
 } from "framer-motion";
 import Header from "../components/layout/Header";
-import { ApiError, createInvestigation, getTrendingFeed } from "../lib/api";
+import {
+  ApiError,
+  createInvestigation,
+  getTrendingFeed,
+  startTrendingInvestigation,
+} from "../lib/api";
 import { createInvestigationHref } from "../lib/investigationHref";
-import type { LiveTrendingTopic, RadarTopic } from "../types/rhetoriq";
+import type { LiveTrendingFeed, LiveTrendingTopic, RadarTopic } from "../types/rhetoriq";
 
 const EASE_OUT = [0.16, 1, 0.3, 1] as const;
 
@@ -89,8 +96,42 @@ function toRadarTopic(t: LiveTrendingTopic): RadarTopic {
   };
 }
 
+
 export default function LandingPage() {
   const streamRef = useRef<HTMLElement>(null);
+  const [feed, setFeed] = useState<LiveTrendingFeed | null>(null);
+  const [feedErrorMessage, setFeedErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadFeed() {
+      try {
+        const response = await getTrendingFeed(3);
+        if (cancelled) {
+          return;
+        }
+        startTransition(() => {
+          setFeed(response);
+          setFeedErrorMessage(null);
+        });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setFeedErrorMessage(
+          error instanceof ApiError
+            ? error.message
+            : "Unable to load the live hot political news feed.",
+        );
+      }
+    }
+
+    void loadFeed();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function scrollToStream() {
     streamRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -100,7 +141,7 @@ export default function LandingPage() {
     <main className="relative overflow-x-clip">
       <Header />
       <Hero onGetStarted={scrollToStream} />
-      <Stream ref={streamRef} />
+      <Stream ref={streamRef} feed={feed} errorMessage={feedErrorMessage} />
     </main>
   );
 }
@@ -216,7 +257,12 @@ function buildSmoothPath(points: Point[]): string {
   return d;
 }
 
-const Stream = forwardRef<HTMLElement>(function Stream(_props, forwardedRef) {
+const Stream = forwardRef<
+  HTMLElement,
+  { feed: LiveTrendingFeed | null; errorMessage: string | null }
+>(function Stream({ feed, errorMessage }, forwardedRef) {
+  const topics = feed?.state === "ready" ? feed.topics.slice(0, 3) : [];
+  const topicKey = topics.map((topic) => topic.id).join("|");
   const containerRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
   const pathRef = useRef<SVGPathElement>(null);
@@ -405,17 +451,21 @@ const Stream = forwardRef<HTMLElement>(function Stream(_props, forwardedRef) {
 
           {/* Cards */}
           <div className="relative z-10">
-            {radarTopics.map((topic, index) => (
-              <StoryRow
-                key={topic.id}
-                ref={(el) => {
-                  cardRefs.current[index] = el;
-                }}
-                topic={topic}
-                index={index}
-                lit={lit[index] ?? false}
-              />
-            ))}
+            {topics.length > 0 ? (
+              topics.map((topic, index) => (
+                <StoryRow
+                  key={topic.id}
+                  ref={(el) => {
+                    cardRefs.current[index] = el;
+                  }}
+                  topic={topic}
+                  index={index}
+                  lit={lit[index] ?? false}
+                />
+              ))
+            ) : (
+              <StreamStateCard feed={feed} errorMessage={errorMessage} />
+            )}
           </div>
         </div>
 
@@ -434,6 +484,53 @@ const Stream = forwardRef<HTMLElement>(function Stream(_props, forwardedRef) {
   );
 });
 
+function StreamStateCard({
+  feed,
+  errorMessage,
+}: {
+  feed: LiveTrendingFeed | null;
+  errorMessage: string | null;
+}) {
+  let title = "Loading hot political news";
+  let body = "Fetching the latest published narrative snapshot from the backend.";
+  let tone: "neutral" | "error" = "neutral";
+
+  if (errorMessage) {
+    title = "Hot political news unavailable";
+    body = errorMessage;
+    tone = "error";
+  } else if (feed?.state === "ready" && feed.topics.length === 0) {
+    title = "Hot political news is warming up";
+    body =
+      feed.warning ??
+      "The discovery pipeline is live, but no topic has cleared the publish thresholds yet.";
+  } else if (feed && (feed.state === "warming" || feed.state === "stale" || feed.state === "error")) {
+    title =
+      feed.state === "error"
+        ? "Hot political news unavailable"
+        : "Hot political news is warming up";
+    body =
+      feed.warning ??
+      "The discovery pipeline has not published a fresh trending snapshot yet.";
+    tone = feed.state === "error" ? "error" : "neutral";
+  }
+
+  return (
+    <div className="py-12">
+      <div
+        className={
+          tone === "error"
+            ? "mx-auto max-w-2xl rounded-[1.5rem] border border-[rgba(146,71,71,0.18)] bg-[rgba(255,244,244,0.92)] p-6 text-[rgb(130,50,50)]"
+            : "mx-auto max-w-2xl rounded-[1.5rem] border border-[var(--border)] bg-[var(--surface-strong)] p-6 text-[var(--muted)] shadow-[0_24px_60px_-44px_rgba(19,35,58,0.5)]"
+        }
+      >
+        <p className="eyebrow">{title}</p>
+        <p className="mt-4 text-base leading-7">{body}</p>
+      </div>
+    </div>
+  );
+}
+
 function SpineHeading() {
   return (
     <div className="text-center">
@@ -451,11 +548,36 @@ function SpineHeading() {
 
 const StoryRow = forwardRef<
   HTMLDivElement,
-  { topic: RadarTopic; index: number; lit: boolean }
+  { topic: LiveTrendingTopic; index: number; lit: boolean }
 >(function StoryRow({ topic, index, lit }, ref) {
   const navigate = useNavigate();
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
   const isLeft = index % 2 === 0;
   const label = String(index + 1).padStart(2, "0");
+
+  async function handleInvestigate() {
+    setIsStarting(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await startTrendingInvestigation(topic.id);
+      navigate(
+        createInvestigationHref(
+          response.investigation_id,
+          `Trace the narrative around ${topic.canonical_phrase}`,
+        ),
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof ApiError
+          ? error.message
+          : "Unable to start the topic investigation right now.",
+      );
+    } finally {
+      setIsStarting(false);
+    }
+  }
 
   return (
     <div className="grid grid-cols-1 py-10 md:grid-cols-2 md:gap-x-24 md:py-14">
@@ -468,8 +590,14 @@ const StoryRow = forwardRef<
           label={label}
           alignRight={isLeft}
           lit={lit}
-          onClick={() => navigate(createInvestigationHref(topic.id))}
+          disabled={isStarting}
+          onClick={handleInvestigate}
         />
+        {errorMessage ? (
+          <p className="mt-4 rounded-[1rem] border border-[rgba(146,71,71,0.18)] bg-[rgba(255,244,244,0.92)] px-4 py-3 text-sm leading-6 text-[rgb(130,50,50)]">
+            {errorMessage}
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -480,18 +608,21 @@ function StoryCard({
   label,
   alignRight,
   lit,
+  disabled,
   onClick,
 }: {
-  topic: RadarTopic;
+  topic: LiveTrendingTopic;
   label: string;
   alignRight: boolean;
   lit: boolean;
+  disabled: boolean;
   onClick: () => void;
 }) {
   return (
     <motion.button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       animate={{
         opacity: lit ? 1 : 0.4,
         y: lit ? 0 : 16,
@@ -499,7 +630,7 @@ function StoryCard({
       }}
       transition={{ duration: 0.5, ease: EASE_OUT }}
       whileHover={{ y: -4 }}
-      className="group block w-full rounded-[1.5rem] border bg-[var(--surface-strong)] p-6 text-left shadow-[0_24px_60px_-44px_rgba(19,35,58,0.5)] backdrop-blur-md transition-shadow hover:shadow-[0_34px_70px_-40px_rgba(19,35,58,0.5)]"
+      className="group block w-full rounded-[1.5rem] border bg-[var(--surface-strong)] p-6 text-left shadow-[0_24px_60px_-44px_rgba(19,35,58,0.5)] backdrop-blur-md transition-shadow hover:shadow-[0_34px_70px_-40px_rgba(19,35,58,0.5)] disabled:cursor-wait disabled:opacity-70"
     >
       <div
         className={`flex items-baseline gap-3 ${alignRight ? "md:flex-row-reverse" : ""}`}
@@ -524,9 +655,9 @@ function StoryCard({
           alignRight ? "md:justify-end" : ""
         }`}
       >
-        <Meta label="Spike" value={topic.spike} emphasized />
-        <Meta label="Sources" value={String(topic.sourceCount)} />
-        <Meta label="Confidence" value={topic.confidence} />
+        <Meta label="Spike" value={`${topic.velocity_score.toFixed(1)}x`} emphasized />
+        <Meta label="Sources" value={String(topic.source_count)} />
+        <Meta label="Confidence" value={topic.confidence_label} />
       </div>
 
       <span
@@ -534,7 +665,7 @@ function StoryCard({
           alignRight ? "md:flex-row-reverse" : ""
         }`}
       >
-        Investigate
+        {disabled ? "Starting..." : "Investigate"}
         <span
           aria-hidden="true"
           className="transition-transform group-hover:translate-x-1"

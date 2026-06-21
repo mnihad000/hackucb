@@ -86,6 +86,16 @@ export async function getInvestigationWorkspace(investigationId: string) {
   );
 }
 
+export async function runInvestigation(investigationId: string) {
+  return request<LiveInvestigationWorkspace>(
+    `/api/investigations/${investigationId}/run`,
+    {
+      body: {},
+      method: "POST",
+    },
+  );
+}
+
 export async function runRetrieval(investigationId: string) {
   return request(`/api/investigations/${investigationId}/retrieve`, {
     body: {},

@@ -10,6 +10,7 @@ import type {
   LiveCounterNarrative,
   LiveDocument,
   LiveFinalReportClaim,
+  LiveGapItem,
   LiveSourceDiversityResult,
   LiveInvestigationWorkspace,
   LiveTimelineEvent,
@@ -29,6 +30,8 @@ export function buildInvestigationExperienceFromWorkspace(
   workspace: LiveInvestigationWorkspace,
 ): InvestigationExperience {
   const report = workspace.report;
+  const loopConfidence =
+    workspace.research_loop?.confidence_dimensions.synthesis_confidence.score;
   const title = report?.report_title ?? `${workspace.plan?.topic ?? "Live"} Investigation`;
   const summary =
     report?.report_summary ??
@@ -39,6 +42,13 @@ export function buildInvestigationExperienceFromWorkspace(
   return {
     confidence: toDisplayConfidence(
       report?.confidence_label ??
+        (loopConfidence !== undefined
+          ? loopConfidence >= 0.72
+            ? "high"
+            : loopConfidence >= 0.46
+              ? "medium"
+              : "low"
+          : undefined) ??
         workspace.analyst?.confidence_label ??
         workspace.timeline?.confidence_label ??
         "unknown",
@@ -64,6 +74,32 @@ export function getRecommendedChecks(workspace: LiveInvestigationWorkspace) {
     [];
 }
 
+export function getRivalHypotheses(workspace: LiveInvestigationWorkspace) {
+  return workspace.plan?.rival_hypotheses ?? [];
+}
+
+export function getPassHistory(workspace: LiveInvestigationWorkspace) {
+  return workspace.research_loop?.pass_history ?? [];
+}
+
+export function getRetryHistory(workspace: LiveInvestigationWorkspace) {
+  return workspace.research_loop?.retry_history ?? [];
+}
+
+export function getOpenGaps(workspace: LiveInvestigationWorkspace): LiveGapItem[] {
+  return (workspace.gap_ledger?.entries ?? workspace.gap_analysis?.missing_evidence ?? []).filter(
+    (gap) => gap.status === "open",
+  );
+}
+
+export function getResolvedGaps(workspace: LiveInvestigationWorkspace): LiveGapItem[] {
+  return (workspace.gap_ledger?.entries ?? []).filter((gap) => gap.status === "resolved");
+}
+
+export function getClaimLedgerEntries(workspace: LiveInvestigationWorkspace) {
+  return workspace.claim_ledger?.entries ?? [];
+}
+
 export function getTopClaims(workspace: LiveInvestigationWorkspace) {
   return workspace.report?.key_claims ?? [];
 }
@@ -74,6 +110,7 @@ export function getLimitations(workspace: LiveInvestigationWorkspace) {
     ...(workspace.receipts?.limitations ?? []),
     ...(workspace.narrative_family?.limitations ?? []),
     ...(workspace.agent_debate?.limitations ?? []),
+    ...(workspace.provenance_trace?.provenance_limitations ?? []),
     ...(workspace.analyst?.limitations ?? []),
     ...(workspace.timeline?.limitations ?? []),
     ...(workspace.counter_narratives?.limitations ?? []),
@@ -97,6 +134,7 @@ export function getCoverageHighlights(workspace: LiveInvestigationWorkspace) {
     `${coverage.total_documents} documents`,
     `${coverage.unique_sources} unique sources`,
     `${coverage.search_rounds_completed} search rounds`,
+    `${Object.keys(coverage.lane_distribution ?? {}).length} retrieval lanes`,
   ];
 }
 
@@ -142,8 +180,14 @@ export function getStageLabel(workspace: LiveInvestigationWorkspace) {
       return "Counter-narratives built";
     case "narrative_family":
       return "Narrative family built";
+    case "gap_analysis":
+      return "Gap analysis built";
+    case "provenance":
+      return "Provenance traced";
     case "analyst":
       return "Analyst synthesis built";
+    case "skeptic":
+      return "Skeptic review built";
     case "claim_counterpoint":
       return "Claim counterpoints built";
     case "receipts":
@@ -152,6 +196,8 @@ export function getStageLabel(workspace: LiveInvestigationWorkspace) {
       return "Agent debate built";
     case "report":
       return "Final report built";
+    case "research_loop":
+      return "Research loop completed";
     default:
       return "Investigation in progress";
   }
@@ -173,7 +219,9 @@ function buildFlowchartData(
     (left, right) =>
       new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
   );
-  const timelineNodes = timelineEvents.map((event, index) =>
+  const timelineNodes = timelineEvents
+    .filter((event) => event.narrative_side !== "counter")
+    .map((event, index) =>
     toTimelineNode(event, index, docsById, workspace),
   );
   const counterNodes = (workspace.counter_narratives?.counter_narratives ?? []).map(
@@ -182,13 +230,12 @@ function buildFlowchartData(
 
   const currentNode: InvestigationNode = {
     id: currentNodeId,
-    label:
-      workspace.report?.sections.headline ??
+    label: "Current narrative state",
+    subtitle:
       workspace.report?.report_title ??
       workspace.plan?.canonical_phrase ??
       workspace.plan?.topic ??
-      "Current narrative",
-    subtitle: "Current narrative state",
+      "Latest narrative snapshot",
     nodeType: "current",
     timestamp: formatTime(workspace.updated_at),
     status: "mainstreaming",
@@ -241,8 +288,8 @@ function toTimelineNode(
 
   return {
     id: nodeId,
-    label: event.title,
-    subtitle: event.source_name,
+    label: getTimelineDisplayLabel(event, index),
+    subtitle: getTimelineDisplaySubtitle(event),
     nodeType: getTimelineNodeType(event),
     timestamp: formatTime(event.timestamp),
     status: index === 0 ? "emerging" : "amplifying",
@@ -335,13 +382,14 @@ function buildEdges(
     });
   }
 
+  const counterAnchorNodeId = getCounterAnchorNodeId(timelineNodes);
   for (const node of counterNodes) {
     edges.push({
-      id: `edge-${node.id}-${currentNodeId}`,
-      source: node.id,
-      target: currentNodeId,
+      id: `edge-${counterAnchorNodeId ?? currentNodeId}-${node.id}`,
+      source: counterAnchorNodeId ?? currentNodeId,
+      target: node.id,
       edgeType: "counter_narrative",
-      label: "Competing response",
+      label: "Counter-frame emerges",
       evidenceText: node.summary,
       confidence: node.confidence,
       animated: true,
@@ -473,6 +521,55 @@ function getTimelineNodeType(event: LiveTimelineEvent): InvestigationNode["nodeT
   return "amplification";
 }
 
+function getTimelineDisplayLabel(event: LiveTimelineEvent, index: number) {
+  if (event.event_type === "first_observed") {
+    return "First observed in our dataset";
+  }
+
+  if (event.source_type === "community_post") {
+    return "Community amplification";
+  }
+
+  if (event.source_type === "local_news") {
+    return "Local / news pickup";
+  }
+
+  if (event.source_type === "national_news") {
+    return "National pickup";
+  }
+
+  if (event.event_type === "official_mention") {
+    return "Official mention";
+  }
+
+  if (index === 1) {
+    return "Community amplification";
+  }
+
+  return event.title;
+}
+
+function getTimelineDisplaySubtitle(event: LiveTimelineEvent) {
+  const publishedAt = formatDateTime(event.timestamp);
+  return publishedAt
+    ? `${event.source_name} · ${publishedAt}`
+    : event.source_name;
+}
+
+function getCounterAnchorNodeId(timelineNodes: InvestigationNode[]) {
+  const localNewsNode = timelineNodes.find((node) => node.label === "Local / news pickup");
+  if (localNewsNode) {
+    return localNewsNode.id;
+  }
+
+  const nationalNode = timelineNodes.find((node) => node.label === "National pickup");
+  if (nationalNode) {
+    return nationalNode.id;
+  }
+
+  return timelineNodes[timelineNodes.length - 1]?.id ?? null;
+}
+
 function getFirstObservedLabel(workspace: LiveInvestigationWorkspace) {
   const firstDocId = workspace.timeline?.first_observed_doc_id;
   if (!firstDocId) {
@@ -532,8 +629,14 @@ function formatStatus(status: LiveInvestigationWorkspace["status"]) {
       return "Counter-narratives built";
     case "narrative_family_completed":
       return "Narrative family built";
+    case "gap_analysis_completed":
+      return "Gap analysis built";
+    case "provenance_completed":
+      return "Provenance traced";
     case "analyst_completed":
       return "Analyst synthesis built";
+    case "skeptic_completed":
+      return "Skeptic review built";
     case "claim_counterpoint_completed":
       return "Claim counterpoints built";
     case "receipts_completed":
@@ -542,6 +645,8 @@ function formatStatus(status: LiveInvestigationWorkspace["status"]) {
       return "Agent debate built";
     case "report_completed":
       return "Final report built";
+    case "research_loop_completed":
+      return "Research loop completed";
     default:
       return "In progress";
   }

@@ -5,18 +5,18 @@ import {
   type NodeMouseHandler,
   type ReactFlowInstance,
 } from "@xyflow/react";
+import { motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { InvestigationFlowchartData } from "../../types/rhetoriq";
 import AnimatedInvestigationEdge from "./AnimatedInvestigationEdge";
-import FlowchartControls from "./FlowchartControls";
 import InvestigationNodeCard from "./InvestigationNodeCard";
 import {
   buildRevealPlan,
   createFlowEdges,
   createFlowNodes,
-  filterFlowchartData,
   FLOW_NODE_HEIGHT,
   FLOW_NODE_WIDTH,
+  getGraphViewportBounds,
   getConnectedNeighborhood,
   getNodePositions,
   resolvePathToCurrent,
@@ -32,22 +32,24 @@ const nodeTypes = {
   investigationNode: InvestigationNodeCard,
 };
 
-const CURRENT_NODE_MS = 280;
-const EDGE_MAIN_MS = 640;
-const EDGE_BRANCH_MS = 420;
-const EDGE_CONNECTOR_MS = 300;
-const NODE_MAIN_MS = 280;
-const NODE_BRANCH_MS = 230;
-const PAUSE_MAIN_MS = 125;
-const PAUSE_BRANCH_MS = 90;
-const FINAL_FRAME_MS = 880;
+const CURRENT_NODE_MS = 820;
+const EDGE_MAIN_MS = 1380;
+const EDGE_BRANCH_MS = 1040;
+const EDGE_CONNECTOR_MS = 760;
+const NODE_MAIN_MS = 780;
+const NODE_BRANCH_MS = 660;
+const PAUSE_MAIN_MS = 340;
+const PAUSE_BRANCH_MS = 240;
+const FINAL_FRAME_MS = 1120;
 
 type InvestigationFlowchartProps = {
-  data: InvestigationFlowchartData;
+  data?: InvestigationFlowchartData;
+  isLoading?: boolean;
 };
 
 export default function InvestigationFlowchart({
   data,
+  isLoading = false,
 }: InvestigationFlowchartProps) {
   const animationController = useRef<{
     runId: number;
@@ -56,28 +58,36 @@ export default function InvestigationFlowchart({
     runId: 0,
     timeoutIds: new Set<number>(),
   });
-  const [animationNonce, setAnimationNonce] = useState(0);
   const [focusMode, setFocusMode] = useState(false);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [isIntroRunning, setIsIntroRunning] = useState(false);
   const [revealedEdgeIds, setRevealedEdgeIds] = useState<string[]>([]);
   const [revealedNodeIds, setRevealedNodeIds] = useState<string[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
-    data.currentNodeId,
+    data?.currentNodeId ?? null,
   );
-  const [showCounterNarratives, setShowCounterNarratives] = useState(true);
-  const [showReceipts, setShowReceipts] = useState(false);
   const flowRef = useRef<ReactFlowInstance<
     InvestigationFlowNode,
     InvestigationFlowEdge
   > | null>(null);
 
-  const visibleData = useMemo(
-    () => filterFlowchartData(data, showCounterNarratives),
-    [data, showCounterNarratives],
+  const visibleData = data ?? null;
+  const hasGraphData = Boolean(visibleData && visibleData.nodes.length > 0);
+  const positions = useMemo(
+    () => (visibleData ? getNodePositions(visibleData) : {}),
+    [visibleData],
   );
-  const positions = useMemo(() => getNodePositions(visibleData), [visibleData]);
-  const revealPlan = useMemo(() => buildRevealPlan(visibleData), [visibleData]);
+  const viewportBounds = useMemo(
+    () =>
+      visibleData
+        ? getGraphViewportBounds(visibleData)
+        : { minX: 0, minY: 0, maxX: 1400, maxY: 2200 },
+    [visibleData],
+  );
+  const revealPlan = useMemo(
+    () => (visibleData ? buildRevealPlan(visibleData) : { phases: [] }),
+    [visibleData],
+  );
   const revealDirections = useMemo(() => {
     const next = new Map<string, "forward" | "reverse">();
 
@@ -118,6 +128,12 @@ export default function InvestigationFlowchart({
   }, [revealPlan]);
 
   useEffect(() => {
+    if (!visibleData) {
+      setSelectedNodeId(null);
+      setFocusMode(false);
+      return;
+    }
+
     if (!visibleData.nodes.some((node) => node.id === selectedNodeId)) {
       setSelectedNodeId(visibleData.currentNodeId);
       setFocusMode(false);
@@ -177,9 +193,13 @@ export default function InvestigationFlowchart({
   }, []);
 
   const revealAllVisibleGraph = useCallback(() => {
+    if (!visibleData) {
+      return;
+    }
+
     setRevealedNodeIds(visibleData.nodes.map((node) => node.id));
     setRevealedEdgeIds(visibleData.edges.map((edge) => edge.id));
-  }, [visibleData.edges, visibleData.nodes]);
+  }, [visibleData]);
 
   const stopIntro = useCallback(
     ({ revealAll = false }: { revealAll?: boolean } = {}) => {
@@ -213,6 +233,10 @@ export default function InvestigationFlowchart({
   );
 
   const startReveal = useCallback(() => {
+    if (!visibleData) {
+      return;
+    }
+
     stopIntro();
     const runId = animationController.current.runId;
     setIsIntroRunning(true);
@@ -243,9 +267,9 @@ export default function InvestigationFlowchart({
 
           if (step.kind === "node") {
             if (phase.id === "current") {
-              focusNode(step.id, 1.18, 720);
+              focusNode(step.id, 1.12, 980);
             } else {
-              framePair(step.cameraAnchorId, step.cameraNodeId, 700);
+              framePair(step.cameraAnchorId, step.cameraNodeId, 980);
             }
 
             revealNode(step.id);
@@ -271,7 +295,7 @@ export default function InvestigationFlowchart({
             continue;
           }
 
-          framePair(step.cameraAnchorId, step.cameraNodeId, 760);
+          framePair(step.cameraAnchorId, step.cameraNodeId, 1180);
           revealEdge(step.id);
 
           const hasNodeImmediatelyAfter =
@@ -294,7 +318,7 @@ export default function InvestigationFlowchart({
         return;
       }
 
-      await waitFor(120, runId);
+      await waitFor(240, runId);
 
       if (animationController.current.runId !== runId) {
         return;
@@ -302,9 +326,9 @@ export default function InvestigationFlowchart({
 
       void flowRef.current?.fitView({
         duration: FINAL_FRAME_MS,
-        maxZoom: 1.03,
+        maxZoom: 1.02,
         minZoom: 0.56,
-        padding: 0.18,
+        padding: 0.24,
       });
 
       const finished = await waitFor(FINAL_FRAME_MS, runId);
@@ -315,19 +339,26 @@ export default function InvestigationFlowchart({
 
       setIsIntroRunning(false);
     })();
-  }, [focusNode, framePair, revealPlan.phases, stopIntro, waitFor]);
+  }, [focusNode, framePair, revealPlan.phases, stopIntro, visibleData, waitFor]);
 
   useEffect(() => {
+    if (!hasGraphData || isLoading) {
+      stopIntro();
+      setRevealedEdgeIds([]);
+      setRevealedNodeIds([]);
+      return;
+    }
+
     startReveal();
 
     return () => {
       animationController.current.runId += 1;
       clearScheduledAnimation();
     };
-  }, [animationNonce, clearScheduledAnimation, startReveal]);
+  }, [clearScheduledAnimation, hasGraphData, isLoading, startReveal, stopIntro]);
 
   const highlightedPath = useMemo(() => {
-    if (!focusMode || !selectedNodeId) {
+    if (!visibleData || !focusMode || !selectedNodeId) {
       return { edgeIds: new Set<string>(), nodeIds: new Set<string>() };
     }
 
@@ -341,7 +372,7 @@ export default function InvestigationFlowchart({
   }, [focusMode, selectedNodeId, visibleData]);
 
   const hoverNeighborhood = useMemo(() => {
-    if (!hoveredNodeId || focusMode) {
+    if (!visibleData || !hoveredNodeId || focusMode) {
       return { edgeIds: new Set<string>(), nodeIds: new Set<string>() };
     }
 
@@ -377,7 +408,7 @@ export default function InvestigationFlowchart({
   }, [highlightedPath.edgeIds, hoverNeighborhood.edgeIds]);
 
   const dimmedNodeIds = useMemo(() => {
-    if (!focusMode || highlightedPath.nodeIds.size === 0) {
+    if (!visibleData || !focusMode || highlightedPath.nodeIds.size === 0) {
       return new Set<string>();
     }
 
@@ -386,7 +417,7 @@ export default function InvestigationFlowchart({
         .map((node) => node.id)
         .filter((nodeId) => !highlightedPath.nodeIds.has(nodeId)),
     );
-  }, [focusMode, highlightedPath.nodeIds, visibleData.nodes]);
+  }, [focusMode, highlightedPath.nodeIds, visibleData]);
 
   const revealedNodeIdSet = useMemo(
     () => new Set(revealedNodeIds),
@@ -399,16 +430,18 @@ export default function InvestigationFlowchart({
 
   const nodes = useMemo(
     () =>
-      createFlowNodes({
-        data: visibleData,
-        dimmedNodeIds,
-        highlightedNodeIds,
-        isFocusMode: focusMode,
-        positions,
-        revealedNodeIds: revealedNodeIdSet,
-        selectedNodeId,
-        showReceipts,
-      }),
+      visibleData
+        ? createFlowNodes({
+            data: visibleData,
+            dimmedNodeIds,
+            highlightedNodeIds,
+            isFocusMode: focusMode,
+            positions,
+            revealedNodeIds: revealedNodeIdSet,
+            selectedNodeId,
+            showReceipts: false,
+          })
+        : [],
     [
       dimmedNodeIds,
       focusMode,
@@ -416,22 +449,23 @@ export default function InvestigationFlowchart({
       positions,
       revealedNodeIdSet,
       selectedNodeId,
-      showReceipts,
       visibleData,
     ],
   );
 
   const edges = useMemo(
     () =>
-      createFlowEdges({
-        data: visibleData,
-        dimmedNodeIds,
-        highlightedEdgeIds,
-        isFocusMode: focusMode,
-        revealDirections,
-        revealDurations,
-        revealedEdgeIds: revealedEdgeIdSet,
-      }),
+      visibleData
+        ? createFlowEdges({
+            data: visibleData,
+            dimmedNodeIds,
+            highlightedEdgeIds,
+            isFocusMode: focusMode,
+            revealDirections,
+            revealDurations,
+            revealedEdgeIds: revealedEdgeIdSet,
+          })
+        : [],
     [
       dimmedNodeIds,
       focusMode,
@@ -445,64 +479,28 @@ export default function InvestigationFlowchart({
 
   const handleNodeClick: NodeMouseHandler<InvestigationFlowNode> = useCallback(
     (_event, node) => {
+      if (!visibleData) {
+        return;
+      }
+
       if (isIntroRunning) {
         stopIntro({ revealAll: true });
       }
 
       setSelectedNodeId(node.id);
       setFocusMode(true);
-      focusNode(node.id, node.id === visibleData.currentNodeId ? 1.08 : 1.16, 720);
+      focusNode(node.id, node.id === visibleData.currentNodeId ? 1.03 : 1.1, 760);
     },
-    [focusNode, isIntroRunning, stopIntro, visibleData.currentNodeId],
+    [focusNode, isIntroRunning, stopIntro, visibleData],
   );
-
-  const handleResetView = useCallback(() => {
-    stopIntro({ revealAll: true });
-    setFocusMode(false);
-    setHoveredNodeId(null);
-    setSelectedNodeId(visibleData.currentNodeId);
-    void flowRef.current?.fitView({
-      duration: 650,
-      maxZoom: 1.03,
-      minZoom: 0.56,
-      padding: 0.18,
-    });
-  }, [stopIntro, visibleData.currentNodeId]);
-
-  const handleReplay = useCallback(() => {
-    stopIntro();
-    setFocusMode(false);
-    setHoveredNodeId(null);
-    setSelectedNodeId(visibleData.currentNodeId);
-    setAnimationNonce((current) => current + 1);
-  }, [stopIntro, visibleData.currentNodeId]);
-
-  const handleFitView = useCallback(() => {
-    stopIntro({ revealAll: true });
-    void flowRef.current?.fitView({
-      duration: 680,
-      maxZoom: 1.03,
-      minZoom: 0.56,
-      padding: 0.18,
-    });
-  }, [stopIntro]);
-
-  const handleCounterNarrativeToggle = useCallback(() => {
-    stopIntro();
-    setShowCounterNarratives((current) => !current);
-    setFocusMode(false);
-    setHoveredNodeId(null);
-    setSelectedNodeId(data.currentNodeId);
-    setAnimationNonce((current) => current + 1);
-  }, [data.currentNodeId, stopIntro]);
 
   return (
     <section>
-      <div className="space-y-4">
-        <div className="flowchart-canvas relative overflow-hidden rounded-[1.3rem] border border-[rgba(12,12,12,0.12)] bg-[rgba(255,255,252,0.96)] shadow-[0_32px_66px_-44px_rgba(0,0,0,0.18)] backdrop-blur-xl">
-          <TerrainBackdrop />
+      <div className="flowchart-canvas relative overflow-hidden rounded-[1.3rem] border border-[rgba(12,12,12,0.12)] bg-[rgba(255,255,252,0.96)] shadow-[0_32px_66px_-44px_rgba(0,0,0,0.18)] backdrop-blur-xl">
+        <StructuredBackdrop />
 
-          <div className="relative h-[960px] sm:h-[1240px]">
+        <div className="relative h-[820px] sm:h-[920px] xl:h-[980px]">
+          {hasGraphData ? (
             <ReactFlow<InvestigationFlowNode, InvestigationFlowEdge>
               aria-label="Narrative path map"
               className="!bg-transparent"
@@ -516,6 +514,10 @@ export default function InvestigationFlowchart({
               nodes={nodes}
               nodesConnectable={false}
               nodesDraggable={false}
+              nodeExtent={[
+                [viewportBounds.minX, viewportBounds.minY],
+                [viewportBounds.maxX, viewportBounds.maxY],
+              ]}
               onInit={(instance) => {
                 flowRef.current = instance;
               }}
@@ -542,75 +544,70 @@ export default function InvestigationFlowchart({
               panOnDrag
               panOnScroll
               proOptions={{ hideAttribution: true }}
+              translateExtent={[
+                [viewportBounds.minX, viewportBounds.minY],
+                [viewportBounds.maxX, viewportBounds.maxY],
+              ]}
               zoomOnDoubleClick={false}
             />
-          </div>
-        </div>
+          ) : null}
 
-        <p className="rounded-[0.95rem] border border-[rgba(12,12,12,0.12)] bg-[rgba(255,255,252,0.9)] px-5 py-4 text-sm leading-7 text-[rgba(14,14,14,0.64)] shadow-[0_18px_34px_-28px_rgba(0,0,0,0.16)]">
-          This map shows first observed sources and spread patterns in the available
-          dataset. It does not prove true origin or coordination.
-        </p>
-
-        <div className="flex justify-end">
-          <div className="max-w-[22rem]">
-            <FlowchartControls
-              onFitView={handleFitView}
-              onReplay={handleReplay}
-              onResetView={handleResetView}
-              onToggleCounterNarratives={handleCounterNarrativeToggle}
-              onToggleReceipts={() => {
-                if (isIntroRunning) {
-                  stopIntro({ revealAll: true });
-                }
-
-                setShowReceipts((current) => !current);
-              }}
-              showCounterNarratives={showCounterNarratives}
-              showReceipts={showReceipts}
-            />
-          </div>
+          {isLoading ? <WaitingTraceOverlay /> : null}
         </div>
       </div>
     </section>
   );
 }
 
-function TerrainBackdrop() {
+function StructuredBackdrop() {
   return (
     <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
-      <svg
-        className="absolute inset-0 h-full w-full opacity-[0.18]"
-        fill="none"
-        preserveAspectRatio="none"
-        viewBox="0 0 1280 1800"
-        xmlns="http://www.w3.org/2000/svg"
-      >
-        {Array.from({ length: 24 }, (_, index) => {
-          const startY = index * 72 - 180;
-          const controlA = startY + 34 - (index % 4) * 18;
-          const controlB = startY - 72 + (index % 5) * 20;
-          const controlC = startY + 118 - (index % 3) * 26;
-          const controlD = startY - 42 + (index % 6) * 14;
-          const endY = startY + 28 - (index % 2) * 22;
-          const d = [
-            `M -120 ${startY}`,
-            `C 90 ${controlA}, 240 ${startY + 98}, 430 ${controlB}`,
-            `S 770 ${controlC}, 980 ${controlD}`,
-            `S 1280 ${startY + 72}, 1440 ${endY}`,
-          ].join(" ");
+      <div className="absolute inset-x-6 bottom-8 top-6 rounded-[1rem] border border-[rgba(12,12,12,0.08)] bg-[linear-gradient(180deg,rgba(255,255,252,0.98),rgba(248,248,245,0.94))]" />
+      <div className="absolute inset-x-6 top-6 h-12 border-b border-[rgba(12,12,12,0.08)]" />
+      <div className="absolute inset-x-6 bottom-8 h-12 border-t border-[rgba(12,12,12,0.08)]" />
+      <div className="absolute bottom-8 left-1/2 top-6 w-px -translate-x-1/2 bg-[linear-gradient(180deg,rgba(12,12,12,0.12),rgba(12,12,12,0.04))]" />
+      <div className="absolute bottom-8 left-[29%] top-6 w-px bg-[linear-gradient(180deg,rgba(12,12,12,0.08),rgba(12,12,12,0.02))]" />
+      <div className="absolute bottom-8 right-[29%] top-6 w-px bg-[linear-gradient(180deg,rgba(12,12,12,0.08),rgba(12,12,12,0.02))]" />
+      <div className="absolute inset-x-6 top-[15rem] h-px bg-[rgba(12,12,12,0.06)]" />
+      <div className="absolute inset-x-6 top-[28rem] h-px bg-[rgba(12,12,12,0.05)]" />
+      <div className="absolute inset-x-6 top-[41rem] h-px bg-[rgba(12,12,12,0.04)]" />
+    </div>
+  );
+}
 
-          return (
-            <path
-              key={index}
-              d={d}
-              stroke="rgba(17,17,17,0.34)"
-              strokeWidth="1.2"
-            />
-          );
-        })}
-      </svg>
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,252,0.28),rgba(255,255,252,0.72))]" />
+function WaitingTraceOverlay() {
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[4] flex items-center justify-center">
+      <div className="relative h-full w-full">
+        <motion.div
+          animate={{ opacity: [0.14, 0.3, 0.14] }}
+          className="absolute left-1/2 top-[18%] h-[52%] w-px -translate-x-1/2 bg-[linear-gradient(180deg,rgba(0,0,0,0.12),rgba(0,0,0,0.44),rgba(0,0,0,0.1))]"
+          transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+        />
+        <motion.div
+          animate={{ scaleX: [0.3, 1, 0.3], opacity: [0.08, 0.26, 0.08] }}
+          className="absolute left-1/2 top-[32%] h-px w-[22rem] origin-center -translate-x-1/2 bg-[linear-gradient(90deg,rgba(0,0,0,0.02),rgba(0,0,0,0.4),rgba(0,0,0,0.02))]"
+          transition={{ duration: 2.2, repeat: Infinity, ease: [0.16, 1, 0.3, 1] }}
+        />
+        <motion.div
+          animate={{ scaleX: [0.2, 1, 0.2], opacity: [0.06, 0.24, 0.06] }}
+          className="absolute left-1/2 top-[48%] h-px w-[30rem] origin-center -translate-x-1/2 bg-[linear-gradient(90deg,rgba(0,0,0,0.02),rgba(0,0,0,0.35),rgba(0,0,0,0.02))]"
+          transition={{ duration: 2.8, repeat: Infinity, ease: [0.16, 1, 0.3, 1], delay: 0.35 }}
+        />
+        <motion.div
+          animate={{ y: ["0%", "88%", "0%"], opacity: [0, 1, 0] }}
+          className="absolute left-1/2 top-[18%] h-6 w-6 -translate-x-1/2 rounded-full border border-[rgba(0,0,0,0.28)] bg-[rgba(255,255,252,0.94)] shadow-[0_10px_28px_-18px_rgba(0,0,0,0.34)]"
+          transition={{ duration: 2.9, repeat: Infinity, ease: [0.25, 0.1, 0.25, 1] }}
+        />
+        <div className="absolute bottom-10 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 text-center">
+          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-[rgba(15,15,15,0.56)]">
+            Tracing narrative branches
+          </p>
+          <p className="max-w-md text-sm leading-6 text-[rgba(15,15,15,0.52)]">
+            Holding the tree open while evidence resolves.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

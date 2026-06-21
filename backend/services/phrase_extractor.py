@@ -24,12 +24,29 @@ _STOP_WORDS = {
     "over", "under", "again", "then", "here", "there", "also", "new",
     "one", "two", "says", "said", "say", "according", "amid", "via",
     "per", "report", "reports", "update", "updates", "amid", "amid",
+    "around", "today",
+}
+_GENERIC_NEWS_TERMS = {
+    "analysis", "article", "articles", "breaking", "coverage", "debate",
+    "debates", "housing", "implications", "industry", "latest", "live",
+    "market", "narrative", "narratives", "news", "official", "opinion",
+    "policy", "political", "politics", "public", "reaction", "research",
+    "review", "statement", "story", "stories", "topic", "topics", "update",
+    "updates", "world", "counter",
 }
 
 
 def _tokenize(text: str) -> list[str]:
     tokens = re.findall(r"\b[a-z][a-z'\-]{1,}\b", text.lower())
     return [t for t in tokens if t not in _STOP_WORDS and len(t) > 2]
+
+
+def _is_publishable_phrase(tokens: list[str]) -> bool:
+    if len(tokens) < 2:
+        return False
+    if len(set(tokens)) == 1:
+        return False
+    return any(token not in _GENERIC_NEWS_TERMS for token in tokens)
 
 
 def extract_top_phrases(
@@ -53,7 +70,10 @@ def extract_top_phrases(
         tokens = _tokenize(text)
         for n in range(min_n, max_n + 1):
             for i in range(len(tokens) - n + 1):
-                gram = " ".join(tokens[i : i + n])
+                gram_tokens = tokens[i : i + n]
+                if not _is_publishable_phrase(gram_tokens):
+                    continue
+                gram = " ".join(gram_tokens)
                 phrase_doc_sets[gram].add(doc_idx)
 
     ranked = [
@@ -61,5 +81,5 @@ def extract_top_phrases(
         for phrase, doc_idxs in phrase_doc_sets.items()
         if len(doc_idxs) >= min_doc_freq
     ]
-    ranked.sort(key=lambda x: x[1], reverse=True)
+    ranked.sort(key=lambda x: (x[1], len(x[0].split()), len(x[0])), reverse=True)
     return ranked[:top_n]

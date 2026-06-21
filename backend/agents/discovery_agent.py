@@ -12,22 +12,18 @@ from services.page_fetcher import HttpPageFetcher
 from services.search_provider import MultiSearchProvider
 
 
-SEED_TOPICS = [
-    "election",
-    "immigration",
-    "border",
-    "tax",
-    "energy",
-    "climate",
-    "crime",
-    "student debt",
-    "housing",
-    "healthcare",
-    "protest",
-    "education",
-    "inflation",
-    "voting",
-    "AI regulation",
+DISCOVERY_HEADLINES = [
+    "breaking news today",
+    "latest politics",
+    "world news today",
+    "business news today",
+    "technology news today",
+    "major policy announcement",
+]
+ENRICHMENT_HEADLINES = [
+    "official statement today",
+    "public reaction today",
+    "fact check latest news",
 ]
 
 _DEFAULT_SOURCE_TYPES = [
@@ -73,35 +69,48 @@ class DiscoveryAgent:
         prior_topics: list[str],
         is_reseed: bool,
     ) -> list[DiscoveryQuery]:
-        seeds = list(SEED_TOPICS)
-        if is_reseed:
-            seeds.extend(prior_topics[:6])
-        else:
-            seeds.extend(prior_topics[:4])
-
-        normalized = []
+        normalized: list[DiscoveryQuery] = []
         seen: set[str] = set()
-        for seed in seeds:
-            value = seed.strip()
+        for query in DISCOVERY_HEADLINES:
+            value = query.strip()
             lowered = value.lower()
             if not value or lowered in seen:
                 continue
             seen.add(lowered)
             normalized.append(DiscoveryQuery(query=value, provider_role="discovery", topic_seed=value))
+
+        for query in ENRICHMENT_HEADLINES:
+            value = query.strip()
+            lowered = value.lower()
+            if not value or lowered in seen:
+                continue
+            seen.add(lowered)
             normalized.append(
                 DiscoveryQuery(
-                    query=f"{value} political narrative",
+                    query=value,
                     provider_role="enrichment",
                     topic_seed=value,
                 )
             )
-            normalized.append(
-                DiscoveryQuery(
-                    query=f"{value} counter narrative",
-                    provider_role="enrichment",
-                    topic_seed=value,
-                )
-            )
+
+        prior_limit = 6 if is_reseed else 4
+        for topic in prior_topics[:prior_limit]:
+            value = topic.strip()
+            lowered = value.lower()
+            if not value:
+                continue
+            exact = f"\"{value}\""
+            if exact.lower() not in seen:
+                seen.add(exact.lower())
+                normalized.append(DiscoveryQuery(query=exact, provider_role="discovery", topic_seed=value))
+            latest = f"{value} latest"
+            if latest.lower() not in seen:
+                seen.add(latest.lower())
+                normalized.append(DiscoveryQuery(query=latest, provider_role="enrichment", topic_seed=value))
+            official = f"{value} official statement"
+            if official.lower() not in seen:
+                seen.add(official.lower())
+                normalized.append(DiscoveryQuery(query=official, provider_role="enrichment", topic_seed=value))
         return normalized
 
     def discover(
@@ -194,12 +203,20 @@ class DiscoveryAgent:
 
     def _canonical_phrase(self, topic_seed: str, result: SearchResult) -> str:
         title = result.title.lower()
+        title_tokens = re.findall(r"[a-z0-9][a-z0-9\-]{2,}", title)
+        seed_tokens = re.findall(r"[a-z0-9][a-z0-9\-]{2,}", topic_seed.lower())
+        if seed_tokens:
+            for index in range(len(title_tokens) - len(seed_tokens) + 1):
+                if title_tokens[index : index + len(seed_tokens)] != seed_tokens:
+                    continue
+                phrase_tokens = title_tokens[index : min(len(title_tokens), index + max(3, len(seed_tokens) + 2))]
+                if len(set(phrase_tokens)) > 1:
+                    return " ".join(phrase_tokens)
+        if len(title_tokens) >= 3:
+            return " ".join(title_tokens[: min(4, len(title_tokens))])
         if topic_seed.lower() in title:
             return topic_seed.lower()
-        tokens = re.findall(r"[a-z0-9][a-z0-9\-]{2,}", title)
-        if len(tokens) >= 3:
-            return " ".join(tokens[: min(4, len(tokens))])
-        return topic_seed.lower()
+        return " ".join(title_tokens) if title_tokens else topic_seed.lower()
 
     def _normalize_url(self, url: str) -> str:
         parsed = urlparse(url.strip())

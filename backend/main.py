@@ -69,6 +69,7 @@ def root() -> dict:
             "GET    /api/investigations/{id}/memory  (load Redis agent memory context)",
             "GET    /api/investigations/{id}/similar-claims  (semantic claim recall from Redis memory)",
             "GET    /api/investigations/{id}/related-articles  (semantic article recall from Redis memory)",
+            "POST   /api/investigations/{id}/run  (execute supervised research loop)",
             "POST   /api/investigations/{id}/retrieve  (run retriever agent)",
             "POST   /api/investigations/{id}/source-diversity  (build deterministic source diversity artifact)",
             "POST   /api/investigations/{id}/timeline  (build deterministic timeline artifact)",

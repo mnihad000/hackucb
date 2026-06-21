@@ -219,7 +219,9 @@ function buildFlowchartData(
     (left, right) =>
       new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
   );
-  const timelineNodes = timelineEvents.map((event, index) =>
+  const timelineNodes = timelineEvents
+    .filter((event) => event.narrative_side !== "counter")
+    .map((event, index) =>
     toTimelineNode(event, index, docsById, workspace),
   );
   const counterNodes = (workspace.counter_narratives?.counter_narratives ?? []).map(
@@ -228,13 +230,12 @@ function buildFlowchartData(
 
   const currentNode: InvestigationNode = {
     id: currentNodeId,
-    label:
-      workspace.report?.sections.headline ??
+    label: "Current narrative state",
+    subtitle:
       workspace.report?.report_title ??
       workspace.plan?.canonical_phrase ??
       workspace.plan?.topic ??
-      "Current narrative",
-    subtitle: "Current narrative state",
+      "Latest narrative snapshot",
     nodeType: "current",
     timestamp: formatTime(workspace.updated_at),
     status: "mainstreaming",
@@ -287,8 +288,8 @@ function toTimelineNode(
 
   return {
     id: nodeId,
-    label: event.title,
-    subtitle: event.source_name,
+    label: getTimelineDisplayLabel(event, index),
+    subtitle: getTimelineDisplaySubtitle(event),
     nodeType: getTimelineNodeType(event),
     timestamp: formatTime(event.timestamp),
     status: index === 0 ? "emerging" : "amplifying",
@@ -381,13 +382,14 @@ function buildEdges(
     });
   }
 
+  const counterAnchorNodeId = getCounterAnchorNodeId(timelineNodes);
   for (const node of counterNodes) {
     edges.push({
-      id: `edge-${node.id}-${currentNodeId}`,
-      source: node.id,
-      target: currentNodeId,
+      id: `edge-${counterAnchorNodeId ?? currentNodeId}-${node.id}`,
+      source: counterAnchorNodeId ?? currentNodeId,
+      target: node.id,
       edgeType: "counter_narrative",
-      label: "Competing response",
+      label: "Counter-frame emerges",
       evidenceText: node.summary,
       confidence: node.confidence,
       animated: true,
@@ -517,6 +519,55 @@ function getTimelineNodeType(event: LiveTimelineEvent): InvestigationNode["nodeT
     return "related";
   }
   return "amplification";
+}
+
+function getTimelineDisplayLabel(event: LiveTimelineEvent, index: number) {
+  if (event.event_type === "first_observed") {
+    return "First observed in our dataset";
+  }
+
+  if (event.source_type === "community_post") {
+    return "Community amplification";
+  }
+
+  if (event.source_type === "local_news") {
+    return "Local / news pickup";
+  }
+
+  if (event.source_type === "national_news") {
+    return "National pickup";
+  }
+
+  if (event.event_type === "official_mention") {
+    return "Official mention";
+  }
+
+  if (index === 1) {
+    return "Community amplification";
+  }
+
+  return event.title;
+}
+
+function getTimelineDisplaySubtitle(event: LiveTimelineEvent) {
+  const publishedAt = formatDateTime(event.timestamp);
+  return publishedAt
+    ? `${event.source_name} · ${publishedAt}`
+    : event.source_name;
+}
+
+function getCounterAnchorNodeId(timelineNodes: InvestigationNode[]) {
+  const localNewsNode = timelineNodes.find((node) => node.label === "Local / news pickup");
+  if (localNewsNode) {
+    return localNewsNode.id;
+  }
+
+  const nationalNode = timelineNodes.find((node) => node.label === "National pickup");
+  if (nationalNode) {
+    return nationalNode.id;
+  }
+
+  return timelineNodes[timelineNodes.length - 1]?.id ?? null;
 }
 
 function getFirstObservedLabel(workspace: LiveInvestigationWorkspace) {

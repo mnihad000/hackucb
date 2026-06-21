@@ -10,7 +10,11 @@ import type {
 
 export const FLOW_NODE_WIDTH = 420;
 export const FLOW_NODE_HEIGHT = 204;
-export const TIMELINE_AXIS_X = 620;
+export const TIMELINE_AXIS_X = 760;
+export const FLOW_STAGE_PADDING_TOP = 140;
+export const FLOW_STAGE_PADDING_RIGHT = 260;
+export const FLOW_STAGE_PADDING_BOTTOM = 180;
+export const FLOW_STAGE_PADDING_LEFT = 260;
 
 export type InvestigationFlowNodeData = {
   node: InvestigationNode;
@@ -84,16 +88,16 @@ type PathResult = {
 };
 
 const PRESET_POSITIONS: Record<string, XYPosition> = {
-  "current-narrative": { x: 760, y: 80 },
-  "national-pickup": { x: 20, y: 320 },
-  "official-transcript": { x: 760, y: 470 },
-  "advocacy-framing": { x: 760, y: 660 },
-  "counter-savings": { x: 760, y: 840 },
-  "local-news": { x: 20, y: 1010 },
-  "policy-blogs": { x: 760, y: 1260 },
-  "community-pickup": { x: 20, y: 1510 },
-  "first-observed": { x: 760, y: 1750 },
-  "uncertain-earlier-mention": { x: 20, y: 1920 },
+  "uncertain-earlier-mention": { x: 180, y: 120 },
+  "first-observed": { x: 900, y: 300 },
+  "community-pickup": { x: 180, y: 500 },
+  "policy-blogs": { x: 900, y: 700 },
+  "local-news": { x: 180, y: 900 },
+  "advocacy-framing": { x: 900, y: 1100 },
+  "official-transcript": { x: 900, y: 1300 },
+  "counter-savings": { x: 180, y: 1500 },
+  "national-pickup": { x: 180, y: 1700 },
+  "current-narrative": { x: 900, y: 1900 },
 };
 
 export function getNodeTypeLabel(nodeType: InvestigationNode["nodeType"]) {
@@ -299,6 +303,27 @@ export function getNodePositions(data: InvestigationFlowchartData) {
   }
 
   return positions;
+}
+
+export function getGraphViewportBounds(data: InvestigationFlowchartData) {
+  const positions = getNodePositions(data);
+  const values = Object.values(positions);
+
+  const minX = Math.min(...values.map((position) => position.x)) - FLOW_STAGE_PADDING_LEFT;
+  const minY = Math.min(...values.map((position) => position.y)) - FLOW_STAGE_PADDING_TOP;
+  const maxX =
+    Math.max(...values.map((position) => position.x + FLOW_NODE_WIDTH)) +
+    FLOW_STAGE_PADDING_RIGHT;
+  const maxY =
+    Math.max(...values.map((position) => position.y + FLOW_NODE_HEIGHT)) +
+    FLOW_STAGE_PADDING_BOTTOM;
+
+  return {
+    maxX,
+    maxY,
+    minX,
+    minY,
+  };
 }
 
 function getIncomingEdges(data: InvestigationFlowchartData) {

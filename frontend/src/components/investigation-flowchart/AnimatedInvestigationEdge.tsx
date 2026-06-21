@@ -50,8 +50,8 @@ export default function AnimatedInvestigationEdge({
   const pathArgs =
     data.revealDirection === "reverse"
       ? {
-          borderRadius: 22,
-          offset: 24,
+          borderRadius: 14,
+          offset: 12,
           sourcePosition: targetPosition,
           sourceX: targetX,
           sourceY: targetY,
@@ -60,8 +60,8 @@ export default function AnimatedInvestigationEdge({
           targetY: sourceY,
         }
       : {
-          borderRadius: 22,
-          offset: 24,
+          borderRadius: 14,
+          offset: 12,
           sourcePosition,
           sourceX,
           sourceY,
@@ -71,8 +71,8 @@ export default function AnimatedInvestigationEdge({
         };
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     ...pathArgs,
-    borderRadius: 8,
-    offset: 18,
+    borderRadius: 6,
+    offset: 10,
   });
   const style = edgeStyles[data.variant];
   const duration = data.revealDurationMs / 1000;

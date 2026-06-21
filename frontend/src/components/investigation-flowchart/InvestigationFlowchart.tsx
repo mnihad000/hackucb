@@ -15,6 +15,7 @@ import {
   createFlowNodes,
   FLOW_NODE_HEIGHT,
   FLOW_NODE_WIDTH,
+  getGraphViewportBounds,
   getConnectedNeighborhood,
   getNodePositions,
   resolvePathToCurrent,
@@ -69,6 +70,10 @@ export default function InvestigationFlowchart({
 
   const visibleData = data;
   const positions = useMemo(() => getNodePositions(visibleData), [visibleData]);
+  const viewportBounds = useMemo(
+    () => getGraphViewportBounds(visibleData),
+    [visibleData],
+  );
   const revealPlan = useMemo(() => buildRevealPlan(visibleData), [visibleData]);
   const revealDirections = useMemo(() => {
     const next = new Map<string, "forward" | "reverse">();
@@ -296,7 +301,7 @@ export default function InvestigationFlowchart({
         duration: FINAL_FRAME_MS,
         maxZoom: 1.03,
         minZoom: 0.56,
-        padding: 0.18,
+        padding: 0.2,
       });
 
       const finished = await waitFor(FINAL_FRAME_MS, runId);
@@ -450,9 +455,9 @@ export default function InvestigationFlowchart({
   return (
     <section>
       <div className="flowchart-canvas relative overflow-hidden rounded-[1.3rem] border border-[rgba(12,12,12,0.12)] bg-[rgba(255,255,252,0.96)] shadow-[0_32px_66px_-44px_rgba(0,0,0,0.18)] backdrop-blur-xl">
-        <TerrainBackdrop />
+        <StructuredBackdrop />
 
-        <div className="relative h-[960px] sm:h-[1240px]">
+        <div className="relative h-[820px] sm:h-[920px] xl:h-[980px]">
           <ReactFlow<InvestigationFlowNode, InvestigationFlowEdge>
             aria-label="Narrative path map"
             className="!bg-transparent"
@@ -466,6 +471,10 @@ export default function InvestigationFlowchart({
             nodes={nodes}
             nodesConnectable={false}
             nodesDraggable={false}
+            nodeExtent={[
+              [viewportBounds.minX, viewportBounds.minY],
+              [viewportBounds.maxX, viewportBounds.maxY],
+            ]}
             onInit={(instance) => {
               flowRef.current = instance;
             }}
@@ -492,6 +501,10 @@ export default function InvestigationFlowchart({
             panOnDrag
             panOnScroll
             proOptions={{ hideAttribution: true }}
+            translateExtent={[
+              [viewportBounds.minX, viewportBounds.minY],
+              [viewportBounds.maxX, viewportBounds.maxY],
+            ]}
             zoomOnDoubleClick={false}
           />
         </div>
@@ -500,41 +513,18 @@ export default function InvestigationFlowchart({
   );
 }
 
-function TerrainBackdrop() {
+function StructuredBackdrop() {
   return (
     <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
-      <svg
-        className="absolute inset-0 h-full w-full opacity-[0.18]"
-        fill="none"
-        preserveAspectRatio="none"
-        viewBox="0 0 1280 1800"
-        xmlns="http://www.w3.org/2000/svg"
-      >
-        {Array.from({ length: 24 }, (_, index) => {
-          const startY = index * 72 - 180;
-          const controlA = startY + 34 - (index % 4) * 18;
-          const controlB = startY - 72 + (index % 5) * 20;
-          const controlC = startY + 118 - (index % 3) * 26;
-          const controlD = startY - 42 + (index % 6) * 14;
-          const endY = startY + 28 - (index % 2) * 22;
-          const d = [
-            `M -120 ${startY}`,
-            `C 90 ${controlA}, 240 ${startY + 98}, 430 ${controlB}`,
-            `S 770 ${controlC}, 980 ${controlD}`,
-            `S 1280 ${startY + 72}, 1440 ${endY}`,
-          ].join(" ");
-
-          return (
-            <path
-              key={index}
-              d={d}
-              stroke="rgba(17,17,17,0.34)"
-              strokeWidth="1.2"
-            />
-          );
-        })}
-      </svg>
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,252,0.28),rgba(255,255,252,0.72))]" />
+      <div className="absolute inset-x-6 bottom-8 top-6 rounded-[1rem] border border-[rgba(12,12,12,0.08)] bg-[linear-gradient(180deg,rgba(255,255,252,0.98),rgba(248,248,245,0.94))]" />
+      <div className="absolute inset-x-6 top-6 h-12 border-b border-[rgba(12,12,12,0.08)]" />
+      <div className="absolute inset-x-6 bottom-8 h-12 border-t border-[rgba(12,12,12,0.08)]" />
+      <div className="absolute bottom-8 left-1/2 top-6 w-px -translate-x-1/2 bg-[linear-gradient(180deg,rgba(12,12,12,0.12),rgba(12,12,12,0.04))]" />
+      <div className="absolute bottom-8 left-[29%] top-6 w-px bg-[linear-gradient(180deg,rgba(12,12,12,0.08),rgba(12,12,12,0.02))]" />
+      <div className="absolute bottom-8 right-[29%] top-6 w-px bg-[linear-gradient(180deg,rgba(12,12,12,0.08),rgba(12,12,12,0.02))]" />
+      <div className="absolute inset-x-6 top-[15rem] h-px bg-[rgba(12,12,12,0.06)]" />
+      <div className="absolute inset-x-6 top-[28rem] h-px bg-[rgba(12,12,12,0.05)]" />
+      <div className="absolute inset-x-6 top-[41rem] h-px bg-[rgba(12,12,12,0.04)]" />
     </div>
   );
 }

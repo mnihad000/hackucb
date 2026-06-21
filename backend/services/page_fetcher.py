@@ -158,14 +158,6 @@ class BrowserbaseFetcher:
             return None
 
 
-def get_page_fetcher(cache=None) -> BrowserbaseFetcher | HttpPageFetcher:
-    """Return a BrowserbaseFetcher when Browserbase is configured, else HttpPageFetcher."""
-    settings = get_settings()
-    if settings.BROWSERBASE_API_KEY and settings.BROWSERBASE_PROJECT_ID:
-        try:
-            import browserbase  # noqa: F401
-            from playwright.sync_api import sync_playwright as _p  # noqa: F401
-            return BrowserbaseFetcher(cache=cache)
-        except ImportError:
-            pass
+def get_page_fetcher(cache=None) -> HttpPageFetcher:
+    """Return the standard httpx fetcher. BrowserbaseFetcher is used only for post-retrieval verification."""
     return HttpPageFetcher(cache=cache)

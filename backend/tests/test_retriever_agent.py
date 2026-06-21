@@ -16,7 +16,7 @@ from models.investigation import (
 from services.document_normalizer import DocumentNormalizer
 from services.investigation_repository import InvestigationRepository
 from services.page_fetcher import HttpPageFetcher
-from services.search_provider import TavilySearchProvider
+from services.search_provider import CachedSearchProvider, TavilySearchProvider
 from services.verification import VerificationService
 
 
@@ -77,6 +77,41 @@ def test_tavily_provider_normalizes_results(monkeypatch):
     assert len(results) == 1
     assert results[0].provider == "tavily"
     assert results[0].url == "https://example.com/story"
+
+
+def test_cached_search_provider_uses_cache_before_inner_provider():
+    calls = {"count": 0}
+    cached_result = SearchResult(
+        query="hidden energy tax",
+        title="Cached story",
+        url="https://example.com/cached",
+        snippet="Cached result",
+        rank=1,
+        provider="fake",
+        provider_score=0.9,
+    )
+
+    class _Cache:
+        def get_search(self, provider, query):
+            assert provider == "fake"
+            assert query == "hidden energy tax"
+            return [cached_result.model_dump(mode="json")]
+
+        def set_search(self, provider, query, results):
+            raise AssertionError("cache hit should not write")
+
+    class _Provider:
+        name = "fake"
+
+        def search(self, query, time_window, source_types, limit):
+            calls["count"] += 1
+            return []
+
+    provider = CachedSearchProvider(_Provider(), cache=_Cache())
+    results = provider.search("hidden energy tax", InvestigationPlanTimeWindow(label="all_time"), ["blog"], 5)
+
+    assert calls["count"] == 0
+    assert results == [cached_result]
 
 
 def test_page_fetcher_rejects_non_html(monkeypatch):

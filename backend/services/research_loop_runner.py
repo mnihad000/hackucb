@@ -99,8 +99,9 @@ class InvestigationRunner:
         last_provenance: ProvenanceTraceResult | None = None
         last_report: FinalReportResult | None = None
         last_claim_ledger: ClaimLedgerResult | None = None
+        max_passes = max(1, self._settings.RESEARCH_LOOP_MAX_PASSES)
 
-        for pass_number in range(1, 4):
+        for pass_number in range(1, max_passes + 1):
             lanes, follow_up_queries, requested_source_classes = self._pass_instructions(
                 plan,
                 last_gap_analysis,
@@ -214,7 +215,7 @@ class InvestigationRunner:
                 gap_analysis,
                 provenance,
                 pass_number=pass_number,
-                max_passes=3,
+                max_passes=max_passes,
             )
             self._repository.save_skeptic_review_result(skeptic_review)
             self._publish_band_stage(

@@ -239,7 +239,7 @@ const Stream = forwardRef<
   HTMLElement,
   { feed: LiveTrendingFeed | null; errorMessage: string | null }
 >(function Stream({ feed, errorMessage }, forwardedRef) {
-  const topics = feed?.state === "ready" ? feed.topics.slice(0, 3) : [];
+  const topics = (feed?.state === "ready" || feed?.state === "stale") ? feed.topics.slice(0, 3) : [];
   const containerRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
   const pathRef = useRef<SVGPathElement>(null);
@@ -249,7 +249,7 @@ const Stream = forwardRef<
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [pathD, setPathD] = useState("");
   const [fractions, setFractions] = useState<number[]>([]);
-  const [lit, setLit] = useState<boolean[]>(() => radarTopics.map(() => false));
+  const [lit, setLit] = useState<boolean[]>(() => FALLBACK_TOPICS.map(() => false));
 
   // Scroll progress across the curve region.
   const { scrollYProgress } = useScroll({
@@ -355,7 +355,7 @@ const Stream = forwardRef<
   return (
     <section
       ref={forwardedRef}
-      data-topic-key={topicKey}
+      data-topic-key={topics.map((t) => t.id).join("|")}
       className="relative px-4 pb-4 pt-10 sm:px-6 lg:px-8"
     >
       <div className="mx-auto max-w-5xl">

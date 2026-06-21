@@ -56,7 +56,9 @@ class TrendingRuntimeStore:
         if not self._redis:
             return
         try:
-            self._redis.set(_LATEST_SNAPSHOT_KEY, snapshot.model_dump_json())
+            # Keep the snapshot for 6 hours so it survives backend restarts and
+            # serves stale-but-useful data while a refresh is running.
+            self._redis.setex(_LATEST_SNAPSHOT_KEY, 6 * 3600, snapshot.model_dump_json())
         except Exception:
             return
 

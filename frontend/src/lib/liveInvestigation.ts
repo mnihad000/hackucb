@@ -230,9 +230,9 @@ function buildFlowchartData(
     .map((event, index) =>
     toTimelineNode(event, index, docsById, workspace),
   );
-  const counterNodes = (workspace.counter_narratives?.counter_narratives ?? []).map(
-    (item, index) => toCounterNode(item, index, docsById),
-  );
+  const counterNodes = (workspace.counter_narratives?.counter_narratives ?? [])
+    .slice(0, 3)
+    .map((item, index) => toCounterNode(item, index, docsById));
 
   const currentNode: InvestigationNode = {
     id: currentNodeId,

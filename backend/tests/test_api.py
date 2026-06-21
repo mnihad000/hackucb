@@ -224,25 +224,26 @@ def test_investigate_returns_planner_artifact():
 
 
 def test_investigate_resolves_news_url_to_page_headline(monkeypatch):
-    def _fake_fetch(self, url):
-        return RawPage(
-            url=url,
-            final_url=url,
-            status_code=200,
-            content_type="text/html",
-            html="""
-                <html>
-                  <head>
-                    <meta property="og:title" content="Mayor announces downtown housing plan - City Herald" />
-                    <title>Mayor announces downtown housing plan - City Herald</title>
-                  </head>
-                  <body>Story body</body>
-                </html>
-            """,
-            fetched_at=datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc),
-        )
+    class _FakeFetcher:
+        def fetch(self, url):
+            return RawPage(
+                url=url,
+                final_url=url,
+                status_code=200,
+                content_type="text/html",
+                html="""
+                    <html>
+                      <head>
+                        <meta property="og:title" content="Mayor announces downtown housing plan - City Herald" />
+                        <title>Mayor announces downtown housing plan - City Herald</title>
+                      </head>
+                      <body>Story body</body>
+                    </html>
+                """,
+                fetched_at=datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc),
+            )
 
-    monkeypatch.setattr(narratives_api.HttpPageFetcher, "fetch", _fake_fetch)
+    monkeypatch.setattr(narratives_api, "get_page_fetcher", lambda: _FakeFetcher())
 
     response = client.post(
         "/api/investigate",

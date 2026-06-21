@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     INVESTIGATION_DB_PATH: str = "investigations.sqlite3"
     RETRIEVER_MAX_ROUNDS: int = 3
     RETRIEVER_MAX_RESULTS_PER_QUERY: int = 5
+    RESEARCH_LOOP_MAX_PASSES: int = 2
     FETCH_TIMEOUT_SECONDS: int = 20
     TRENDING_REFRESH_HOURS: int = 6
     TRENDING_RESEED_HOURS: int = 24

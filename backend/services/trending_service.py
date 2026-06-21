@@ -100,7 +100,7 @@ class TrendingService:
                 snapshot,
                 last_error or "Trending snapshot is stale and a refresh is pending.",
             ),
-            topics=[],
+            topics=snapshot.topics[:limit],
         )
 
     def get_status(self) -> TrendingStatusResponse:
@@ -150,7 +150,6 @@ class TrendingService:
                 "topic_id": topic.id,
                 "related_phrases": topic.related_phrases,
             },
-            model_client=MockModelClient(),
         )
         investigation_id = f"inv_{uuid4().hex}"
         investigation_repository.save_plan(investigation_id, plan.query_text, plan)

@@ -65,6 +65,8 @@ from services.ingestion import get_merged_documents
 from services.investigation_cache import get_investigation_cache
 from services.investigation_repository import InvestigationRepository
 from services.page_fetcher import get_page_fetcher
+from services.search_provider import CachedSearchProvider, build_search_provider
+from services.trending_cache import TrendingRedisCache
 from services.research_loop_runner import InvestigationRunner
 from services.mutation_detection import MutationDetector
 from services.redis_memory import get_redis_memory_service
@@ -536,7 +538,13 @@ def _store_report_in_memory(result: FinalReportResult) -> None:
 
 
 def _build_retriever_agent() -> RetrieverAgent:
-    return RetrieverAgent(repository=_investigation_repo, page_fetcher=get_page_fetcher())
+    cache = TrendingRedisCache(get_settings().REDIS_URL)
+    provider = CachedSearchProvider(build_search_provider(), cache=cache)
+    return RetrieverAgent(
+        repository=_investigation_repo,
+        search_provider=provider,
+        page_fetcher=get_page_fetcher(cache=cache),
+    )
 
 
 def _build_investigation_runner() -> InvestigationRunner:

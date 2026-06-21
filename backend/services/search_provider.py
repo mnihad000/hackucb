@@ -211,6 +211,40 @@ class MultiSearchProvider:
         }
 
 
+class CachedSearchProvider(SearchProvider):
+    """SearchProvider-compatible cache wrapper for investigation retrieval."""
+
+    def __init__(self, provider: SearchProvider, cache=None) -> None:
+        self.provider = provider
+        self._cache = cache
+        self.name = provider.name
+
+    def search(
+        self,
+        query: str,
+        time_window: InvestigationPlanTimeWindow,
+        source_types: list[str],
+        limit: int,
+    ) -> list[SearchResult]:
+        if self._cache is not None:
+            cached = self._cache.get_search(self.name, query)
+            if cached is not None:
+                try:
+                    return [SearchResult(**item) for item in cached]
+                except Exception:
+                    pass
+
+        results = self.provider.search(query, time_window, source_types, limit)
+
+        if self._cache is not None and results:
+            self._cache.set_search(
+                self.name,
+                query,
+                [result.model_dump(mode="json") for result in results],
+            )
+        return results
+
+
 def build_search_provider() -> SearchProvider:
     settings = get_settings()
     provider = settings.SEARCH_PROVIDER.lower()
@@ -223,4 +257,3 @@ def build_search_provider() -> SearchProvider:
 
 def source_name_from_url(url: str) -> str:
     return urlparse(url).netloc.lower()
-

@@ -1,5 +1,6 @@
 import type {
   LiveInvestigationWorkspace,
+  LiveRecentInvestigationSummary,
   LiveTrendingFeed,
   LiveTrendingInvestigationResponse,
 } from "../types/rhetoriq";
@@ -64,6 +65,12 @@ export async function getTrendingFeed(limit = 6) {
   return request<LiveTrendingFeed>(`/api/trending?limit=${limit}`);
 }
 
+export async function getRecentInvestigations(limit = 6) {
+  return request<LiveRecentInvestigationSummary[]>(
+    `/api/investigations?limit=${limit}`,
+  );
+}
+
 export async function startTrendingInvestigation(topicId: string) {
   return request<LiveTrendingInvestigationResponse>(
     `/api/trending/${topicId}/investigate`,
@@ -107,6 +114,13 @@ export async function runCounterNarratives(investigationId: string) {
   });
 }
 
+export async function runNarrativeFamily(investigationId: string) {
+  return request(`/api/investigations/${investigationId}/family`, {
+    body: {},
+    method: "POST",
+  });
+}
+
 export async function runAnalyst(investigationId: string) {
   return request(`/api/investigations/${investigationId}/analyst`, {
     body: {},
@@ -123,6 +137,13 @@ export async function runClaimCounterpoints(investigationId: string) {
 
 export async function runReceipts(investigationId: string) {
   return request(`/api/investigations/${investigationId}/receipts`, {
+    body: {},
+    method: "POST",
+  });
+}
+
+export async function runAgentDebate(investigationId: string) {
+  return request(`/api/investigations/${investigationId}/agent-debate`, {
     body: {},
     method: "POST",
   });

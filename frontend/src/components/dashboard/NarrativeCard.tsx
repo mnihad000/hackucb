@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, startTrendingInvestigation } from "../../lib/api";
-import { createInvestigationHref } from "../../lib/demoData";
+import { createInvestigationHref } from "../../lib/investigationHref";
 import type { LiveTrendingTopic } from "../../types/rhetoriq";
 
 type NarrativeCardProps = {

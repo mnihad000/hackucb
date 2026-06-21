@@ -58,7 +58,7 @@ _MOCK_OUTPUTS: dict[str, dict] = {
         "time_window": {"start": None, "end": None, "label": "all_time"},
         "retrieval_mode": "broad",
         "risk_notes": [
-            "Use 'first observed in our dataset' instead of claiming true origin.",
+            "Use 'first observed in our dataset' instead of claiming a definitive origin.",
             "Do not infer coordination or intent from timing alone.",
             "Return an evidence-seeking plan, not a user-facing answer.",
         ],

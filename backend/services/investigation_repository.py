@@ -7,12 +7,15 @@ from datetime import datetime, timezone
 
 from models.document import Document
 from models.investigation import (
+    AgentDebateResult,
     AnalystResult,
     ClaimCounterpointResult,
     CounterNarrativeResult,
     FinalReportResult,
     InvestigationPlan,
+    RecentInvestigationSummary,
     InvestigationWorkspace,
+    NarrativeFamilyResult,
     ReceiptsResult,
     RetrievalResult,
     SourceDiversityResult,
@@ -101,11 +104,67 @@ class InvestigationRepository:
             source_diversity=self.get_source_diversity_result(investigation_id),
             timeline=self.get_timeline_result(investigation_id),
             counter_narratives=self.get_counter_narrative_result(investigation_id),
+            narrative_family=self.get_narrative_family_result(investigation_id),
             analyst=self.get_analyst_result(investigation_id),
             claim_counterpoints=self.get_claim_counterpoint_result(investigation_id),
             receipts=self.get_receipts_result(investigation_id),
+            agent_debate=self.get_agent_debate_result(investigation_id),
             report=self.get_final_report_result(investigation_id),
         )
+
+    def get_recent_investigations(self, limit: int = 6) -> list[RecentInvestigationSummary]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT investigation_id, query_text, status, updated_at, plan_json
+                FROM investigations
+                WHERE investigation_id LIKE 'inv_%' AND status != 'planning_completed'
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+        results: list[RecentInvestigationSummary] = []
+        for row in rows:
+            investigation_id = row["investigation_id"]
+            plan = (
+                InvestigationPlan.model_validate_json(row["plan_json"])
+                if row["plan_json"]
+                else None
+            )
+            retrieval = self.get_retrieval_result(investigation_id)
+            report = self.get_final_report_result(investigation_id)
+            analyst = self.get_analyst_result(investigation_id)
+            timeline = self.get_timeline_result(investigation_id)
+            receipts = self.get_receipts_result(investigation_id)
+
+            report_title = (
+                report.report_title
+                if report is not None
+                else self._derive_recent_title(plan, row["query_text"])
+            )
+            report_summary = None
+            if report is not None:
+                report_summary = report.report_summary
+            elif analyst is not None:
+                report_summary = analyst.draft_report_sections.executive_summary
+            elif timeline is not None:
+                report_summary = timeline.timeline_summary
+
+            results.append(
+                RecentInvestigationSummary(
+                    investigation_id=investigation_id,
+                    query_text=row["query_text"],
+                    status=row["status"],
+                    updated_at=datetime.fromisoformat(row["updated_at"]),
+                    report_title=report_title,
+                    report_summary=report_summary,
+                    receipt_count=self._count_receipts(receipts),
+                    source_count=self._count_sources(retrieval),
+                )
+            )
+        return results
 
     def save_retrieval_result(self, result: RetrievalResult, documents: list[Document]) -> None:
         now = datetime.now(timezone.utc).isoformat()
@@ -321,6 +380,38 @@ class InvestigationRepository:
             return None
         return CounterNarrativeResult.model_validate_json(row["result_json"])
 
+    def save_narrative_family_result(self, result: NarrativeFamilyResult) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE investigations
+                SET status = ?, current_stage = ?, updated_at = ?
+                WHERE investigation_id = ?
+                """,
+                ("narrative_family_completed", "narrative_family", now, result.investigation_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO narrative_family_results (investigation_id, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(investigation_id) DO UPDATE SET
+                    result_json=excluded.result_json,
+                    updated_at=excluded.updated_at
+                """,
+                (result.investigation_id, result.model_dump_json(), now, now),
+            )
+
+    def get_narrative_family_result(self, investigation_id: str) -> NarrativeFamilyResult | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT result_json FROM narrative_family_results WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return NarrativeFamilyResult.model_validate_json(row["result_json"])
+
     def save_analyst_result(self, result: AnalystResult) -> None:
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
@@ -449,6 +540,38 @@ class InvestigationRepository:
             return None
         return ReceiptsResult.model_validate_json(row["result_json"])
 
+    def save_agent_debate_result(self, result: AgentDebateResult) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE investigations
+                SET status = ?, current_stage = ?, updated_at = ?
+                WHERE investigation_id = ?
+                """,
+                ("agent_debate_completed", "agent_debate", now, result.investigation_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO agent_debate_results (investigation_id, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(investigation_id) DO UPDATE SET
+                    result_json=excluded.result_json,
+                    updated_at=excluded.updated_at
+                """,
+                (result.investigation_id, result.model_dump_json(), now, now),
+            )
+
+    def get_agent_debate_result(self, investigation_id: str) -> AgentDebateResult | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT result_json FROM agent_debate_results WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return AgentDebateResult.model_validate_json(row["result_json"])
+
     def get_final_report_result(self, investigation_id: str) -> FinalReportResult | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -470,6 +593,28 @@ class InvestigationRepository:
         parent = os.path.dirname(self._db_path)
         if parent:
             os.makedirs(parent, exist_ok=True)
+
+    def _count_receipts(self, receipts: ReceiptsResult | None) -> int:
+        if receipts is None:
+            return 0
+
+        seen: set[str] = set()
+        for review in [*receipts.claim_receipts, *receipts.counter_claim_receipts]:
+            for item in [*review.supporting_receipts, *review.contradicting_receipts]:
+                seen.add(f"{review.claim_id}:{item.document_id}")
+        return len(seen)
+
+    def _count_sources(self, retrieval: RetrievalResult | None) -> int:
+        if retrieval is None:
+            return 0
+        if retrieval.coverage_summary.total_documents:
+            return retrieval.coverage_summary.total_documents
+        return len(retrieval.retrieved_document_ids)
+
+    def _derive_recent_title(self, plan: InvestigationPlan | None, query_text: str) -> str:
+        if plan is not None and plan.topic.strip():
+            return f"{plan.topic.strip().title()} Investigation"
+        return query_text.strip() or "Investigation"
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
@@ -547,6 +692,13 @@ class InvestigationRepository:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS narrative_family_results (
+                    investigation_id TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS analyst_results (
                     investigation_id TEXT PRIMARY KEY,
                     result_json TEXT NOT NULL,
@@ -562,6 +714,13 @@ class InvestigationRepository:
                 );
 
                 CREATE TABLE IF NOT EXISTS receipts_results (
+                    investigation_id TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_debate_results (
                     investigation_id TEXT PRIMARY KEY,
                     result_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,

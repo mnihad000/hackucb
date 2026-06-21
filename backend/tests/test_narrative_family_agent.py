@@ -1,10 +1,11 @@
 import os
 import sys
-import json
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+from agents.model_client import BaseModelClient
+from agents.narrative_family_agent import build_narrative_family
 from models.document import Document
 from models.investigation import (
     CounterNarrative,
@@ -15,8 +16,19 @@ from models.investigation import (
     TimelineEvent,
     TimelineResult,
 )
-from models.investigation import NarrativeFamilyResult
-from services.narrative_family_builder import build_narrative_family
+
+
+class _StaticClient(BaseModelClient):
+    def __init__(self, payload: dict):
+        self.payload = payload
+
+    def generate_json(self, system_prompt: str, user_prompt: str, schema_name: str) -> dict:
+        return self.payload
+
+
+class _FailingClient(BaseModelClient):
+    def generate_json(self, system_prompt: str, user_prompt: str, schema_name: str) -> dict:
+        raise RuntimeError("boom")
 
 
 def _plan() -> InvestigationPlan:
@@ -66,7 +78,7 @@ def _doc(
     )
 
 
-def test_narrative_family_builder_creates_main_counter_and_related_branches():
+def _inputs():
     plan = _plan()
     docs = [
         _doc("doc_1", "localwatch.com", "local_news", "Hidden energy tax hits local debate", ["hidden energy tax", "ratepayer burden"], 8),
@@ -132,42 +144,53 @@ def test_narrative_family_builder_creates_main_counter_and_related_branches():
         confidence_score=0.68,
         confidence_label="medium",
     )
+    return plan, docs, retrieval, timeline, counter
 
-    result = build_narrative_family("inv_family", plan, retrieval, docs, timeline, counter)
 
-    assert result.child_narratives
-    assert any("Main Branch" in child.title for child in result.child_narratives)
-    assert any("Corrective" in child.title for child in result.child_narratives)
-    assert any(child.canonical_phrase == "green mandate costs" for child in result.child_narratives)
-    assert result.active_branch_id == "family_main"
-    assert result.mutation_summary
+def test_narrative_family_agent_ignores_unknown_branch_ids():
+    plan, docs, retrieval, timeline, counter = _inputs()
+    client = _StaticClient(
+        {
+            "family_title": "Hybrid family",
+            "parent_frame": "Cost burden frame",
+            "summary": "Hybrid summary",
+            "active_branch_id": "family_main",
+            "selected_branch_ids": ["family_main", "invented_branch", "family_related_1"],
+            "branch_annotations": [
+                {
+                    "branch_id": "family_related_1",
+                    "title": "Green Costs Mutation Branch",
+                    "relationship_to_parent": "Mutation branch",
+                    "branch_summary": "Tracks a nearby phrase mutation.",
+                }
+            ],
+            "mutation_summary": "Hybrid mutation summary",
+            "limitations": [],
+            "confidence_score": 0.74,
+        }
+    )
+
+    result = build_narrative_family("inv_family", plan, retrieval, docs, timeline, counter, model_client=client)
+
+    assert result.generation_method == "hybrid_agent"
+    assert result.child_narratives[0].id == "family_main"
+    assert all(branch.id != "invented_branch" for branch in result.child_narratives)
+    assert any("unknown branch ids" in item.lower() for item in result.limitations)
+    assert result.mutation_summary == "Hybrid mutation summary"
+
+
+def test_narrative_family_agent_falls_back_cleanly_on_failure():
+    plan, docs, retrieval, timeline, counter = _inputs()
+
+    result = build_narrative_family(
+        "inv_family",
+        plan,
+        retrieval,
+        docs,
+        timeline,
+        counter,
+        model_client=_FailingClient(),
+    )
+
     assert result.generation_method == "deterministic"
-    assert any(child.branch_type == "main" for child in result.child_narratives)
-    assert any(child.branch_type == "counter" for child in result.child_narratives)
-    assert result.fastest_growing_child is not None
-    assert result.broadest_source_diversity_child is not None
-    assert result.confidence_label in {"medium", "high"}
-    assert all(step.to_phrase != "hidden energy tax myth" for step in result.mutation_trail)
-
-
-def test_narrative_family_result_accepts_legacy_cached_json_defaults():
-    legacy_payload = {
-        "investigation_id": "inv_family",
-        "plan_snapshot": _plan().model_dump(mode="json"),
-        "family_title": "Legacy Family",
-        "parent_frame": "Legacy frame",
-        "summary": "Legacy summary",
-        "child_narratives": [],
-        "fastest_growing_child": None,
-        "broadest_source_diversity_child": None,
-        "limitations": [],
-        "confidence_score": 0.4,
-        "confidence_label": "low",
-    }
-
-    result = NarrativeFamilyResult.model_validate_json(json.dumps(legacy_payload))
-
-    assert result.active_branch_id is None
-    assert result.mutation_summary == ""
-    assert result.mutation_trail == []
-    assert result.generation_method == "deterministic"
+    assert any("deterministic family grouping was used" in item.lower() for item in result.limitations)

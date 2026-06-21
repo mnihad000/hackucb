@@ -14,6 +14,7 @@ from models.investigation import (
     DraftReportSections,
     InvestigationPlan,
     InvestigationPlanTimeWindow,
+    NarrativeFamilyResult,
     ReceiptsResult,
     SoftenedClaim,
 )
@@ -111,6 +112,22 @@ def test_agent_debate_builder_surfaces_rejected_and_softened_claims():
         confidence_score=0.7,
         confidence_label="medium",
     )
+    family = NarrativeFamilyResult(
+        investigation_id="inv_debate",
+        plan_snapshot=plan,
+        family_title="Cost narrative family",
+        parent_frame="Cost burden framing",
+        summary="summary",
+        child_narratives=[],
+        active_branch_id=None,
+        fastest_growing_child=None,
+        broadest_source_diversity_child=None,
+        mutation_summary="The main branch shows two phrase shifts across source types.",
+        mutation_trail=[],
+        limitations=[],
+        confidence_score=0.62,
+        confidence_label="medium",
+    )
     receipts = ReceiptsResult(
         investigation_id="inv_debate",
         plan_snapshot=plan,
@@ -153,6 +170,7 @@ def test_agent_debate_builder_surfaces_rejected_and_softened_claims():
         plan,
         analyst,
         counter,
+        family,
         counterpoints,
         receipts,
         report=None,

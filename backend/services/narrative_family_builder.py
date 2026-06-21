@@ -10,9 +10,11 @@ from models.investigation import (
     InvestigationPlan,
     NarrativeFamilyChild,
     NarrativeFamilyResult,
+    NarrativeMutationStep,
     RetrievalResult,
     TimelineResult,
 )
+from services.mutation_detection import MutationDetector
 
 _GENERIC_PHRASE_WORDS = {
     "breaking",
@@ -49,9 +51,7 @@ def build_narrative_family(
     if main_branch is not None:
         child_branches.append(main_branch)
 
-    child_branches.extend(
-        _build_counter_branches(counter_narratives, docs_by_id, all_documents)
-    )
+    child_branches.extend(_build_counter_branches(counter_narratives, docs_by_id, all_documents))
     child_branches.extend(
         _build_related_phrase_branches(
             plan,
@@ -64,6 +64,7 @@ def build_narrative_family(
     child_branches = _dedupe_children(child_branches)
     child_branches.sort(
         key=lambda branch: (
+            branch.branch_type != "main",
             -branch.growth_score,
             -branch.source_diversity_score,
             branch.title.lower(),
@@ -89,7 +90,20 @@ def build_narrative_family(
         key=lambda branch: branch.source_diversity_score,
         default=None,
     )
-    confidence_score = _family_confidence(all_documents, child_branches, counter_narratives)
+    active_branch = _pick_active_branch(child_branches, fastest_child)
+    mutation_trail = _build_mutation_trail(active_branch, child_branches, all_documents)
+    mutation_phrase_keys = {
+        mutation.from_phrase.strip().lower()
+        for mutation in mutation_trail
+    } | {
+        mutation.to_phrase.strip().lower()
+        for mutation in mutation_trail
+    }
+    child_branches = [
+        _apply_branch_type_overrides(branch, mutation_phrase_keys)
+        for branch in child_branches
+    ]
+    confidence_score = _family_confidence(all_documents, child_branches, counter_narratives, mutation_trail)
 
     return NarrativeFamilyResult(
         investigation_id=investigation_id,
@@ -98,11 +112,54 @@ def build_narrative_family(
         parent_frame=_parent_frame(plan, child_branches),
         summary=_family_summary(plan, child_branches, fastest_child, broadest_child),
         child_narratives=child_branches,
+        active_branch_id=active_branch.id if active_branch else None,
         fastest_growing_child=fastest_child.id if fastest_child else None,
         broadest_source_diversity_child=broadest_child.id if broadest_child else None,
+        mutation_summary=_mutation_summary(plan, active_branch, mutation_trail, docs_by_id),
+        mutation_trail=mutation_trail,
         limitations=limitations,
         confidence_score=confidence_score,
         confidence_label=_confidence_label(confidence_score),
+        generation_method="deterministic",
+    )
+
+
+def refresh_narrative_family_result(
+    result: NarrativeFamilyResult,
+    documents: list[Document],
+    *,
+    active_branch_id: str | None = None,
+    generation_method: str | None = None,
+) -> NarrativeFamilyResult:
+    branch_by_id = {branch.id: branch for branch in result.child_narratives}
+    active_branch = branch_by_id.get(active_branch_id or result.active_branch_id or "")
+    if active_branch is None:
+        active_branch = _pick_active_branch(result.child_narratives, None)
+
+    mutation_trail = _build_mutation_trail(active_branch, result.child_narratives, documents)
+    mutation_phrase_keys = {
+        mutation.from_phrase.strip().lower()
+        for mutation in mutation_trail
+    } | {
+        mutation.to_phrase.strip().lower()
+        for mutation in mutation_trail
+    }
+    refreshed_branches = []
+    for branch in result.child_narratives:
+        normalized_branch = branch
+        if branch.branch_type == "mutation":
+            normalized_branch = branch.model_copy(update={"branch_type": "related"})
+        refreshed_branches.append(_apply_branch_type_overrides(normalized_branch, mutation_phrase_keys))
+
+    docs_by_id = {document.id: document for document in documents}
+    return result.model_copy(
+        update={
+            "child_narratives": refreshed_branches,
+            "active_branch_id": active_branch.id if active_branch else None,
+            "mutation_summary": _mutation_summary(result.plan_snapshot, active_branch, mutation_trail, docs_by_id),
+            "mutation_trail": mutation_trail,
+            "generation_method": generation_method or result.generation_method,
+        }
     )
 
 
@@ -129,6 +186,7 @@ def _build_main_branch(
     return _build_branch(
         branch_id="family_main",
         title=f"{canonical_phrase.title()} Main Branch",
+        branch_type="main",
         canonical_phrase=canonical_phrase,
         related_phrases=_top_related_phrases(branch_docs, exclude={canonical_phrase.lower()}),
         relationship_to_parent="Primary branch of the investigated narrative in the retrieved corpus.",
@@ -156,6 +214,7 @@ def _build_counter_branches(
             _build_branch(
                 branch_id=f"family_counter_{index}",
                 title=counter.title,
+                branch_type="counter",
                 canonical_phrase=canonical_phrase,
                 related_phrases=counter.related_phrases,
                 relationship_to_parent=counter.relationship_to_main_narrative.replace("_", " "),
@@ -213,6 +272,7 @@ def _build_related_phrase_branches(
             _build_branch(
                 branch_id=f"family_related_{index}",
                 title=f"{phrase.title()} Related Branch",
+                branch_type="related",
                 canonical_phrase=phrase,
                 related_phrases=_top_related_phrases(
                     unique_docs,
@@ -223,7 +283,7 @@ def _build_related_phrase_branches(
                 all_documents=documents,
             )
         )
-        if len(children) >= 3:
+        if len(children) >= 4:
             break
     return children
 
@@ -232,6 +292,7 @@ def _build_branch(
     *,
     branch_id: str,
     title: str,
+    branch_type: str,
     canonical_phrase: str,
     related_phrases: list[str],
     relationship_to_parent: str,
@@ -242,7 +303,10 @@ def _build_branch(
         documents,
         key=lambda document: document.published_at or datetime.max.replace(tzinfo=timezone.utc),
     )
-    first_document = next((document for document in ordered if document.published_at is not None), ordered[0] if ordered else None)
+    first_document = next(
+        (document for document in ordered if document.published_at is not None),
+        ordered[0] if ordered else None,
+    )
     source_count = len({document.source_name for document in documents})
     source_type_count = len({document.source_type for document in documents})
     source_diversity_score = _source_diversity_score(documents, all_documents)
@@ -252,6 +316,7 @@ def _build_branch(
     return NarrativeFamilyChild(
         id=branch_id,
         title=title,
+        branch_type=branch_type,
         canonical_phrase=canonical_phrase,
         related_phrases=related_phrases[:6],
         first_observed_doc_id=first_document.id if first_document else None,
@@ -276,7 +341,7 @@ def _branch_summary(
     return (
         f"'{canonical_phrase}' appears across {len(documents)} retrieved document(s) from "
         f"{source_count} source(s). It is currently classified as {growth_status.replace('_', ' ')} "
-        f"and is grouped here because it {relationship_to_parent.lower().rstrip('.') }."
+        f"and is grouped here because it {relationship_to_parent.lower().rstrip('.')}."
     )
 
 
@@ -396,9 +461,141 @@ def _family_summary(
     if fastest_child is not None:
         parts.append(f"The fastest-growing branch in the current corpus is '{fastest_child.title}'.")
     if broadest_child is not None:
-        parts.append(
-            f"The broadest source mix appears under '{broadest_child.title}'."
+        parts.append(f"The broadest source mix appears under '{broadest_child.title}'.")
+    return " ".join(parts)
+
+
+def _pick_active_branch(
+    child_branches: list[NarrativeFamilyChild],
+    fastest_child: NarrativeFamilyChild | None,
+) -> NarrativeFamilyChild | None:
+    for branch in child_branches:
+        if branch.branch_type == "main":
+            return branch
+    return fastest_child or (child_branches[0] if child_branches else None)
+
+
+def _build_mutation_trail(
+    active_branch: NarrativeFamilyChild | None,
+    child_branches: list[NarrativeFamilyChild],
+    documents: list[Document],
+) -> list[NarrativeMutationStep]:
+    if active_branch is None or not documents:
+        return []
+
+    allowed_branch_phrases = {
+        branch.canonical_phrase.strip().lower()
+        for branch in child_branches
+        if branch.branch_type != "counter"
+    }
+    excluded_counter_phrases = {
+        branch.canonical_phrase.strip().lower()
+        for branch in child_branches
+        if branch.branch_type == "counter"
+    }
+    detector = MutationDetector()
+    mutations = detector.detect_mutations(documents)
+    if not mutations:
+        return []
+
+    seed_phrases = {
+        active_branch.canonical_phrase.strip().lower(),
+        *{phrase.strip().lower() for phrase in active_branch.related_phrases},
+    }
+    relevant = [
+        mutation
+        for mutation in mutations
+        if (
+            mutation["from_phrase"].strip().lower() in allowed_branch_phrases
+            or mutation["to_phrase"].strip().lower() in allowed_branch_phrases
         )
+        and mutation["from_phrase"].strip().lower() not in excluded_counter_phrases
+        and mutation["to_phrase"].strip().lower() not in excluded_counter_phrases
+    ]
+    ordered: list[dict] = []
+    seen_edges: set[tuple[str, str, str, str]] = set()
+    known_phrases = set(seed_phrases)
+
+    for mutation in relevant:
+        edge_key = (
+            mutation["from_phrase"].lower(),
+            mutation["to_phrase"].lower(),
+            mutation["from_doc_id"],
+            mutation["to_doc_id"],
+        )
+        if edge_key in seen_edges:
+            continue
+        from_key = mutation["from_phrase"].strip().lower()
+        to_key = mutation["to_phrase"].strip().lower()
+        if from_key in known_phrases or to_key in known_phrases:
+            ordered.append(mutation)
+            seen_edges.add(edge_key)
+            known_phrases.add(from_key)
+            known_phrases.add(to_key)
+        if len(ordered) >= 6:
+            break
+
+    if not ordered:
+        ordered = relevant[:4]
+
+    return [
+        NarrativeMutationStep(
+            from_phrase=mutation["from_phrase"],
+            to_phrase=mutation["to_phrase"],
+            from_doc_id=mutation["from_doc_id"],
+            to_doc_id=mutation["to_doc_id"],
+            mutation_type=mutation["mutation_type"],
+            similarity_score=mutation["similarity_score"],
+            time_delta_hours=mutation["time_delta_hours"],
+            source_shift=mutation["source_shift"],
+            explanation=mutation["explanation"],
+        )
+        for mutation in ordered[:6]
+    ]
+
+
+def _apply_branch_type_overrides(
+    branch: NarrativeFamilyChild,
+    mutation_phrase_keys: set[str],
+) -> NarrativeFamilyChild:
+    if branch.branch_type in {"main", "counter"}:
+        return branch
+    if branch.canonical_phrase.strip().lower() in mutation_phrase_keys:
+        return branch.model_copy(update={"branch_type": "mutation"})
+    return branch
+
+
+def _mutation_summary(
+    plan: InvestigationPlan,
+    active_branch: NarrativeFamilyChild | None,
+    mutation_trail: list[NarrativeMutationStep],
+    docs_by_id: dict[str, Document],
+) -> str:
+    if active_branch is None:
+        return (
+            f"No active narrative branch could be isolated for mutation tracing around "
+            f"{plan.canonical_phrase or plan.topic}."
+        )
+    if not mutation_trail:
+        return (
+            f"No strong phrase-mutation lineage was isolated for the active branch "
+            f"'{active_branch.title}' in the current retrieved corpus."
+        )
+
+    first_step = mutation_trail[0]
+    last_step = mutation_trail[-1]
+    first_source = docs_by_id.get(first_step.from_doc_id)
+    last_source = docs_by_id.get(last_step.to_doc_id)
+    parts = [
+        f"The active branch '{active_branch.title}' shows {len(mutation_trail)} phrase evolution step(s).",
+        f"It begins with '{first_step.from_phrase}'"
+        + (f" in {first_source.source_name}" if first_source is not None else "")
+        + f" and reaches '{last_step.to_phrase}'"
+        + (f" in {last_source.source_name}" if last_source is not None else "")
+        + ".",
+    ]
+    if any(step.source_shift for step in mutation_trail):
+        parts.append("At least one step reflects movement across distinct sources.")
     return " ".join(parts)
 
 
@@ -406,6 +603,7 @@ def _family_confidence(
     documents: list[Document],
     child_branches: list[NarrativeFamilyChild],
     counter_narratives: CounterNarrativeResult,
+    mutation_trail: list[NarrativeMutationStep],
 ) -> float:
     if not documents:
         return 0.18
@@ -415,7 +613,9 @@ def _family_confidence(
     score += min(0.12, len({document.source_type for document in documents}) * 0.03)
     if counter_narratives.counter_narratives:
         score += 0.08
-    return round(min(score, 0.91), 3)
+    if mutation_trail:
+        score += min(0.09, len(mutation_trail) * 0.02)
+    return round(min(score, 0.93), 3)
 
 
 def _confidence_label(score: float) -> str:

@@ -3,6 +3,8 @@ import os
 from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ["DEMO_MODE"] = "true"
+from config import get_settings
+get_settings.cache_clear()
 
 import pytest
 from fastapi.testclient import TestClient
@@ -577,6 +579,8 @@ def test_narrative_family_endpoint_builds_artifact_from_persisted_state(tmp_path
     payload = response.json()
     assert payload["investigation_id"] == investigation_id
     assert payload["child_narratives"]
+    assert "mutation_trail" in payload
+    assert "generation_method" in payload
     assert repo.get_narrative_family_result(investigation_id) is not None
 
 
@@ -871,6 +875,7 @@ def test_final_report_endpoint_builds_artifact_from_persisted_state(tmp_path, mo
     assert "counterpoint_summary" in payload["key_claims"][0]
     assert "support_status" in payload["key_claims"][0]
     assert repo.get_source_diversity_result(investigation_id) is not None
+    assert repo.get_narrative_family_result(investigation_id) is not None
     assert repo.get_receipts_result(investigation_id) is not None
     assert repo.get_agent_debate_result(investigation_id) is not None
 

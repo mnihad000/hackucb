@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from agents.receipts_agent import build_receipts as build_receipts_agent
 from agents.claim_counterpoint_agent import build_claim_counterpoints
+from agents.narrative_family_agent import build_narrative_family as build_narrative_family_artifact
 from agents.planner_agent import plan_investigation
 from agents.retriever_agent import RetrieverAgent
 from config import get_settings
@@ -48,9 +49,6 @@ from services.ingestion import get_merged_documents
 from services.investigation_cache import get_investigation_cache
 from services.investigation_repository import InvestigationRepository
 from services.mutation_detection import MutationDetector
-from services.narrative_family_builder import (
-    build_narrative_family as build_narrative_family_artifact,
-)
 from services.retrieval import Retriever
 from services.source_diversity_builder import build_source_diversity as build_source_diversity_artifact
 from services.spike_detection import SpikeDetector
@@ -184,6 +182,7 @@ def _build_base_report_result(
 ) -> FinalReportResult:
     timeline_result = _ensure_timeline_result(investigation_id, plan, retrieval, documents)
     counter_result = _ensure_counter_narrative_result(investigation_id, plan, retrieval, documents)
+    family_result = _ensure_narrative_family_result(investigation_id, plan, retrieval, documents)
     analyst_result = _ensure_analyst_result(investigation_id, plan, retrieval, documents)
     claim_counterpoint_result = _ensure_claim_counterpoint_result(
         investigation_id,
@@ -198,6 +197,7 @@ def _build_base_report_result(
         documents,
         timeline_result,
         counter_result,
+        family_result,
         analyst_result,
         claim_counterpoint_result,
     )
@@ -742,6 +742,7 @@ def agent_debate(
 
     try:
         counter_result = _ensure_counter_narrative_result(investigation_id, plan, retrieval, documents)
+        family_result = _ensure_narrative_family_result(investigation_id, plan, retrieval, documents)
         analyst_result = _ensure_analyst_result(investigation_id, plan, retrieval, documents)
         report_result, receipts_result, claim_counterpoint_result = _ensure_receipts_and_report(
             investigation_id,
@@ -755,6 +756,7 @@ def agent_debate(
             plan,
             analyst_result,
             counter_result,
+            family_result,
             claim_counterpoint_result,
             receipts_result,
             report_result,
@@ -812,6 +814,7 @@ def final_report(
             force_refresh=request.force_refresh,
         )
         counter_result = _ensure_counter_narrative_result(investigation_id, plan, retrieval, documents)
+        family_result = _ensure_narrative_family_result(investigation_id, plan, retrieval, documents)
         analyst_result = _ensure_analyst_result(investigation_id, plan, retrieval, documents)
         if request.force_refresh or cached_agent_debate is None:
             debate_result = build_agent_debate_artifact(
@@ -819,6 +822,7 @@ def final_report(
                 plan,
                 analyst_result,
                 counter_result,
+                family_result,
                 claim_counterpoint_result,
                 receipts_result,
                 result,

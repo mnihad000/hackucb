@@ -9,6 +9,7 @@ from models.investigation import (
     CounterNarrativeResult,
     FinalReportResult,
     InvestigationPlan,
+    NarrativeFamilyResult,
     ReceiptsResult,
     SoftenedClaim,
 )
@@ -21,6 +22,7 @@ def build_agent_debate(
     plan: InvestigationPlan,
     analyst: AnalystResult,
     counter_narratives: CounterNarrativeResult,
+    narrative_family: NarrativeFamilyResult | None,
     claim_counterpoints: ClaimCounterpointResult,
     receipts: ReceiptsResult,
     report: FinalReportResult | None,
@@ -28,11 +30,28 @@ def build_agent_debate(
     rejected_claims = _rejected_claims(receipts)
     softened_claims = _softened_claims(receipts)
     analyst_position = _analyst_position(analyst)
-    skeptic_response = _skeptic_response(analyst, counter_narratives, claim_counterpoints, receipts)
+    skeptic_response = _skeptic_response(
+        analyst,
+        counter_narratives,
+        narrative_family,
+        claim_counterpoints,
+        receipts,
+    )
     receipts_check = _receipts_check(receipts)
-    counter_narrative_note = _counter_narrative_note(counter_narratives, claim_counterpoints)
-    safety_grounding_decision = _safety_grounding_decision(receipts, rejected_claims, softened_claims)
-    final_language_decision = _final_language_decision(report, receipts, rejected_claims, softened_claims)
+    counter_narrative_note = _counter_narrative_note(counter_narratives, narrative_family, claim_counterpoints)
+    safety_grounding_decision = _safety_grounding_decision(
+        receipts,
+        narrative_family,
+        rejected_claims,
+        softened_claims,
+    )
+    final_language_decision = _final_language_decision(
+        report,
+        narrative_family,
+        receipts,
+        rejected_claims,
+        softened_claims,
+    )
     limitations = [
         "Agent debate is summarized deterministically from observable stage outputs; a dedicated skeptic or safety agent is not yet running in this backend.",
     ]
@@ -70,6 +89,7 @@ def _analyst_position(analyst: AnalystResult) -> str:
 def _skeptic_response(
     analyst: AnalystResult,
     counter_narratives: CounterNarrativeResult,
+    narrative_family: NarrativeFamilyResult | None,
     claim_counterpoints: ClaimCounterpointResult,
     receipts: ReceiptsResult,
 ) -> str:
@@ -92,6 +112,10 @@ def _skeptic_response(
         parts.append(
             f"The strongest claim-level counterpoint is a {strongest_pair.counter_type.replace('_', ' ')} response to '{strongest_pair.main_claim_text}'."
         )
+    if narrative_family is not None and narrative_family.mutation_trail:
+        parts.append(
+            f"The active branch mutation rail contains {len(narrative_family.mutation_trail)} phrase-evolution step(s), so the debate should distinguish semantic drift from factual corroboration."
+        )
     if analyst.limitations:
         parts.append(f"Key analyst limitation carried into the debate: {analyst.limitations[0]}")
     return " ".join(parts)
@@ -113,9 +137,15 @@ def _receipts_check(receipts: ReceiptsResult) -> str:
 
 def _counter_narrative_note(
     counter_narratives: CounterNarrativeResult,
+    narrative_family: NarrativeFamilyResult | None,
     claim_counterpoints: ClaimCounterpointResult,
 ) -> str:
     if not counter_narratives.counter_narratives:
+        if narrative_family is not None and narrative_family.mutation_summary:
+            return (
+                "No strong counter-frame cluster was available, so the debate remained anchored to the main evidence packet. "
+                + narrative_family.mutation_summary
+            )
         return "No strong counter-frame cluster was available, so the debate remained anchored to the main evidence packet."
     strongest_cluster = max(
         counter_narratives.counter_narratives,
@@ -126,26 +156,36 @@ def _counter_narrative_note(
             f"The debate considered the counter-frame '{strongest_cluster.title}', but no claim-level pair was strong enough to attach to a report claim."
         )
     strongest_pair = max(claim_counterpoints.pairs, key=lambda pair: pair.confidence_score)
-    return (
+    note = (
         f"The debate incorporated the counter-frame '{strongest_cluster.title}' and the strongest claim-level response targeted "
         f"'{strongest_pair.main_claim_text}' with a {strongest_pair.counter_type.replace('_', ' ')} critique."
     )
+    if narrative_family is not None and narrative_family.mutation_summary:
+        note = f"{note} {narrative_family.mutation_summary}"
+    return note
 
 
 def _safety_grounding_decision(
     receipts: ReceiptsResult,
+    narrative_family: NarrativeFamilyResult | None,
     rejected_claims: list[str],
     softened_claims: list[SoftenedClaim],
 ) -> str:
     if rejected_claims:
-        return (
+        decision = (
             f"Safety grounding requires {len(rejected_claims)} claim(s) to stay out of the report as confident conclusions and "
             f"{len(softened_claims)} claim(s) to use qualified language."
         )
+        if narrative_family is not None and narrative_family.mutation_trail:
+            decision += " Mutation lineage should be described as framing evolution, not independent proof."
+        return decision
     if softened_claims:
-        return (
+        decision = (
             f"Safety grounding passes with caution: {len(softened_claims)} claim(s) should be presented as suggestive rather than settled."
         )
+        if narrative_family is not None and narrative_family.mutation_trail:
+            decision += " Mutation evidence should remain in the language of observed phrase shifts."
+        return decision
     if receipts.claim_receipts:
         return "Safety grounding passes with no major claim rejections in the current retrieved corpus."
     return "Safety grounding remains limited because the investigation has no completed main-claim receipts review."
@@ -153,6 +193,7 @@ def _safety_grounding_decision(
 
 def _final_language_decision(
     report: FinalReportResult | None,
+    narrative_family: NarrativeFamilyResult | None,
     receipts: ReceiptsResult,
     rejected_claims: list[str],
     softened_claims: list[SoftenedClaim],
@@ -166,7 +207,10 @@ def _final_language_decision(
             "Use qualified language such as 'the retrieved evidence suggests' or 'in the observed corpus' for contested claims."
         )
     if report is not None:
-        return f"Final language can stay close to the current report framing: {report.report_summary}"
+        summary = report.report_summary
+        if narrative_family is not None and narrative_family.mutation_summary:
+            summary = f"{summary} {narrative_family.mutation_summary}"
+        return f"Final language can stay close to the current report framing: {summary}"
     return "Final language can remain assertive only where receipts show strong support and limited contradiction."
 
 

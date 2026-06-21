@@ -62,6 +62,8 @@ CounterNarrativeRelationship = Literal["opposing", "reframing", "corrective"]
 CounterNarrativeConfidenceLabel = Literal["low", "medium", "high"]
 NarrativeGrowthStatus = Literal["emerging", "amplifying", "mainstreaming", "declining", "unknown"]
 NarrativeFamilyConfidenceLabel = Literal["low", "medium", "high", "unknown"]
+NarrativeFamilyBranchType = Literal["main", "counter", "related", "mutation"]
+NarrativeFamilyGenerationMethod = Literal["deterministic", "hybrid_agent"]
 ClaimType = Literal["observed_fact", "inference", "uncertainty", "limitation", "recommendation"]
 AnalystConfidenceLabel = Literal["low", "medium", "high"]
 ClaimCounterpointType = Literal["opposing", "corrective", "reframing"]
@@ -300,6 +302,7 @@ class NarrativeFamilyChild(BaseModel):
     id: str
     title: str
     canonical_phrase: str
+    branch_type: NarrativeFamilyBranchType = "related"
     related_phrases: list[str] = Field(default_factory=list)
     first_observed_doc_id: str | None = None
     relationship_to_parent: str
@@ -312,6 +315,18 @@ class NarrativeFamilyChild(BaseModel):
     growth_score: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
+class NarrativeMutationStep(BaseModel):
+    from_phrase: str
+    to_phrase: str
+    from_doc_id: str
+    to_doc_id: str
+    mutation_type: Literal["mutation", "phrase_reuse"]
+    similarity_score: float = Field(ge=0.0, le=1.0)
+    time_delta_hours: float = Field(ge=0.0)
+    source_shift: bool = False
+    explanation: str
+
+
 class NarrativeFamilyResult(BaseModel):
     investigation_id: str
     plan_snapshot: InvestigationPlan
@@ -319,11 +334,15 @@ class NarrativeFamilyResult(BaseModel):
     parent_frame: str
     summary: str
     child_narratives: list[NarrativeFamilyChild] = Field(default_factory=list)
+    active_branch_id: str | None = None
     fastest_growing_child: str | None = None
     broadest_source_diversity_child: str | None = None
+    mutation_summary: str = ""
+    mutation_trail: list[NarrativeMutationStep] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     confidence_score: float = Field(ge=0.0, le=1.0)
     confidence_label: NarrativeFamilyConfidenceLabel
+    generation_method: NarrativeFamilyGenerationMethod = "deterministic"
     cached: bool = False
 
 

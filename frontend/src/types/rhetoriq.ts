@@ -369,6 +369,7 @@ export type LiveNarrativeFamilyChild = {
   id: string;
   title: string;
   canonical_phrase: string;
+  branch_type: "main" | "counter" | "related" | "mutation";
   related_phrases: string[];
   first_observed_doc_id: string | null;
   relationship_to_parent: string;
@@ -381,6 +382,18 @@ export type LiveNarrativeFamilyChild = {
   growth_score: number;
 };
 
+export type LiveNarrativeMutationStep = {
+  from_phrase: string;
+  to_phrase: string;
+  from_doc_id: string;
+  to_doc_id: string;
+  mutation_type: "mutation" | "phrase_reuse";
+  similarity_score: number;
+  time_delta_hours: number;
+  source_shift: boolean;
+  explanation: string;
+};
+
 export type LiveNarrativeFamilyResult = {
   investigation_id: string;
   plan_snapshot: LiveInvestigationPlan;
@@ -388,11 +401,15 @@ export type LiveNarrativeFamilyResult = {
   parent_frame: string;
   summary: string;
   child_narratives: LiveNarrativeFamilyChild[];
+  active_branch_id: string | null;
   fastest_growing_child: string | null;
   broadest_source_diversity_child: string | null;
+  mutation_summary: string;
+  mutation_trail: LiveNarrativeMutationStep[];
   limitations: string[];
   confidence_score: number;
   confidence_label: InvestigationConfidence | "unknown";
+  generation_method: "deterministic" | "hybrid_agent";
   cached: boolean;
 };
 

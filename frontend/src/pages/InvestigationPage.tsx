@@ -560,6 +560,7 @@ function NarrativeFamilyCard({
   const documentMap = new Map(documents.map((document) => [document.id, document]));
   const fastest = family.fastest_growing_child;
   const broadest = family.broadest_source_diversity_child;
+  const activeBranchId = family.active_branch_id;
 
   return (
     <div className="rounded-[2rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.86)] p-7 shadow-[0_38px_68px_-46px_rgba(19,35,58,0.4)] backdrop-blur-xl sm:p-8">
@@ -576,62 +577,126 @@ function NarrativeFamilyCard({
         <div className="flex flex-wrap gap-2">
           <span className="data-pill">{family.confidence_label} confidence</span>
           <span className="data-pill">{family.child_narratives.length} branches</span>
+          <span className="data-pill">{family.generation_method.replaceAll("_", " ")}</span>
         </div>
       </div>
 
-      <div className="mt-6 rounded-[1.4rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5">
-        <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
-          Parent frame
-        </p>
-        <p className="mt-3 text-lg font-semibold text-[var(--ink)]">{family.parent_frame}</p>
+      <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+        <div className="rounded-[1.4rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5">
+          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+            Parent frame
+          </p>
+          <p className="mt-3 text-lg font-semibold text-[var(--ink)]">{family.parent_frame}</p>
+          <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+            RhetoriQ maps semantic framing and mutation patterns in the retrieved corpus.
+            It does not treat family placement as proof of coordination or truth.
+          </p>
+        </div>
+
+        <div className="rounded-[1.4rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+              Mutation rail
+            </p>
+            <span className="data-pill">{family.mutation_trail.length} steps</span>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-[var(--ink)]">
+            {family.mutation_summary || "No strong phrase evolution chain was isolated for this branch."}
+          </p>
+          {family.mutation_trail.length > 0 ? (
+            <div className="mt-4 space-y-3">
+              {family.mutation_trail.map((step) => {
+                const fromDoc = documentMap.get(step.from_doc_id);
+                const toDoc = documentMap.get(step.to_doc_id);
+                return (
+                  <article
+                    key={`${step.from_doc_id}-${step.to_doc_id}-${step.from_phrase}-${step.to_phrase}`}
+                    className="rounded-[1.1rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(245,247,250,0.94)] p-4"
+                  >
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="data-pill">{step.mutation_type.replaceAll("_", " ")}</span>
+                      <span className="data-pill">{Math.round(step.similarity_score * 100)}% match</span>
+                      <span className="data-pill">{Math.round(step.time_delta_hours)}h later</span>
+                      {step.source_shift ? <span className="data-pill">source shift</span> : null}
+                    </div>
+                    <p className="mt-4 text-base font-semibold leading-7 text-[var(--ink)]">
+                      {step.from_phrase} {"->"} {step.to_phrase}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                      {fromDoc ? `${fromDoc.source_name} -> ` : ""}
+                      {toDoc ? toDoc.source_name : "later source"}
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{step.explanation}</p>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
       </div>
 
-      <div className="mt-5 space-y-4">
-        {family.child_narratives.map((child) => {
-          const firstObservedDoc = child.first_observed_doc_id
-            ? documentMap.get(child.first_observed_doc_id)
-            : null;
-          return (
-            <article
-              key={child.id}
-              className="rounded-[1.35rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5"
-            >
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                <span className="data-pill">{child.growth_status}</span>
-                {child.id === fastest ? <span className="data-pill">fastest growing</span> : null}
-                {child.id === broadest ? <span className="data-pill">broadest sources</span> : null}
-              </div>
-              <h3 className="mt-4 text-lg font-semibold tracking-[-0.03em] text-[var(--ink)]">
-                {child.title}
-              </h3>
-              <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                {child.relationship_to_parent}
-              </p>
-              <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{child.branch_summary}</p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <span className="data-pill">{child.source_count} sources</span>
-                <span className="data-pill">{child.source_type_count} source types</span>
-                {firstObservedDoc ? (
-                  <span className="data-pill">
-                    first observed: {firstObservedDoc.source_name}
-                  </span>
-                ) : null}
-              </div>
-              {child.related_phrases.length > 0 ? (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {child.related_phrases.map((phrase) => (
-                    <span
-                      key={`${child.id}-${phrase}`}
-                      className="rounded-full border border-[rgba(19,35,58,0.08)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]"
-                    >
-                      {phrase}
-                    </span>
-                  ))}
+      <div className="mt-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+            Branches
+          </p>
+          {activeBranchId ? <span className="data-pill">active branch highlighted</span> : null}
+        </div>
+
+        <div className="mt-4 space-y-4">
+          {family.child_narratives.map((child) => {
+            const firstObservedDoc = child.first_observed_doc_id
+              ? documentMap.get(child.first_observed_doc_id)
+              : null;
+            const isActive = child.id === activeBranchId;
+            return (
+              <article
+                key={child.id}
+                className={`rounded-[1.35rem] border bg-white/92 p-5 ${
+                  isActive
+                    ? "border-[rgba(160,106,46,0.32)] shadow-[0_24px_44px_-34px_rgba(160,106,46,0.34)]"
+                    : "border-[rgba(19,35,58,0.08)]"
+                }`}
+              >
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="data-pill">{describeBranchType(child.branch_type)}</span>
+                  <span className="data-pill">{child.growth_status}</span>
+                  {isActive ? <span className="data-pill">active branch</span> : null}
+                  {child.id === fastest ? <span className="data-pill">fastest growing</span> : null}
+                  {child.id === broadest ? <span className="data-pill">broadest sources</span> : null}
                 </div>
-              ) : null}
-            </article>
-          );
-        })}
+                <h3 className="mt-4 text-lg font-semibold tracking-[-0.03em] text-[var(--ink)]">
+                  {child.title}
+                </h3>
+                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                  {child.relationship_to_parent}
+                </p>
+                <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{child.branch_summary}</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <span className="data-pill">{child.source_count} sources</span>
+                  <span className="data-pill">{child.source_type_count} source types</span>
+                  {firstObservedDoc ? (
+                    <span className="data-pill">
+                      first observed: {firstObservedDoc.source_name}
+                    </span>
+                  ) : null}
+                </div>
+                {child.related_phrases.length > 0 ? (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {child.related_phrases.map((phrase) => (
+                      <span
+                        key={`${child.id}-${phrase}`}
+                        className="rounded-full border border-[rgba(19,35,58,0.08)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]"
+                      >
+                        {phrase}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -772,6 +837,10 @@ function formatDistributionLine(label: string, distribution: Record<string, numb
     .map(([key, count]) => `${key.replaceAll("_", " ")}: ${count}`)
     .join(", ");
   return `${label}: ${summary}`;
+}
+
+function describeBranchType(value: "main" | "counter" | "related" | "mutation") {
+  return value.replaceAll("_", " ");
 }
 
 function formatTimestamp(value: string) {

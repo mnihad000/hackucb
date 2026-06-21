@@ -69,31 +69,6 @@ const FALLBACK_TOPICS: RadarTopic[] = [
   },
 ];
 
-function toRadarTopic(t: LiveTrendingTopic): RadarTopic {
-  const sourceMix = Object.keys(t.source_diversity_snapshot ?? {})
-    .slice(0, 3)
-    .map((k) => k.replace(/_/g, " "))
-    .join(", ") || "Mixed";
-  const firstObserved = t.first_observed_at
-    ? new Date(t.first_observed_at).toLocaleString("en-US", {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      })
-    : "—";
-  return {
-    id: t.id,
-    title: t.title,
-    summary: t.summary,
-    spike: `${(t.velocity_score ?? 1).toFixed(1)}x`,
-    sourceCount: t.source_count ?? 0,
-    firstObserved,
-    status: t.status ?? "Emerging",
-    sourceMix,
-    confidence: t.confidence_label ?? "Medium",
-  };
-}
 
 
 export default function LandingPage() {
@@ -144,6 +119,7 @@ export default function LandingPage() {
       <Header />
       <Hero onGetStarted={scrollToStream} />
       <Stream ref={streamRef} feed={feed} errorMessage={feedErrorMessage} />
+      <SiteFooter />
     </main>
   );
 }
@@ -264,30 +240,16 @@ const Stream = forwardRef<
   { feed: LiveTrendingFeed | null; errorMessage: string | null }
 >(function Stream({ feed, errorMessage }, forwardedRef) {
   const topics = feed?.state === "ready" ? feed.topics.slice(0, 3) : [];
-  const topicKey = topics.map((topic) => topic.id).join("|");
   const containerRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
   const pathRef = useRef<SVGPathElement>(null);
   const anchorsRef = useRef<Point[]>([]);
   const totalLenRef = useRef(0);
 
-  const [radarTopics, setRadarTopics] = useState<RadarTopic[]>(FALLBACK_TOPICS);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [pathD, setPathD] = useState("");
   const [fractions, setFractions] = useState<number[]>([]);
   const [lit, setLit] = useState<boolean[]>(() => FALLBACK_TOPICS.map(() => false));
-
-  useEffect(() => {
-    getTrendingFeed(3)
-      .then((feed) => {
-        if (feed.topics.length > 0) {
-          const mapped = feed.topics.slice(0, 3).map(toRadarTopic);
-          setRadarTopics(mapped);
-          setLit(mapped.map(() => false));
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   // Scroll progress across the curve region.
   const { scrollYProgress } = useScroll({
@@ -785,3 +747,13 @@ const PromptModule = forwardRef<HTMLDivElement>(function PromptModule(_props, re
     </motion.div>
   );
 });
+
+function SiteFooter() {
+  return (
+    <footer className="px-4 pb-12 pt-10 text-center sm:px-6">
+      <p className="text-[0.72rem] font-medium uppercase tracking-[0.18em] text-[var(--muted)]">
+        UC Berkeley AI Hackathon 2021
+      </p>
+    </footer>
+  );
+}

@@ -1,6 +1,9 @@
+import html
 import logging
+import re
 import threading
 from fastapi import APIRouter, HTTPException, Query
+from urllib.parse import urlparse
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -59,6 +62,7 @@ from services.graph_builder import GraphBuilder
 from services.ingestion import get_merged_documents
 from services.investigation_cache import get_investigation_cache
 from services.investigation_repository import InvestigationRepository
+from services.page_fetcher import get_page_fetcher
 from services.research_loop_runner import InvestigationRunner
 from services.mutation_detection import MutationDetector
 from services.redis_memory import get_redis_memory_service
@@ -83,6 +87,8 @@ _graph_builder = GraphBuilder()
 _verifier = VerificationService()
 _investigation_repo = InvestigationRepository(get_settings().INVESTIGATION_DB_PATH)
 _investigation_cache = get_investigation_cache()
+_TITLE_TAG_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_TITLE_SITE_SPLIT_RE = re.compile(r"\s+[\-|:|]\s+")
 
 
 def _update_workspace_cache(investigation_id: str) -> None:
@@ -92,6 +98,79 @@ def _update_workspace_cache(investigation_id: str) -> None:
     workspace = _investigation_repo.get_investigation_workspace(investigation_id)
     if workspace:
         _investigation_cache.cache_workspace(workspace)
+
+
+def _looks_like_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value.strip())
+    except Exception:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _extract_page_title(html_text: str) -> str | None:
+    meta_match = re.search(
+        r'<meta[^>]+(?:property|name)=["\']og:title["\'][^>]+content=["\'](.*?)["\']',
+        html_text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if meta_match:
+        return html.unescape(meta_match.group(1)).strip()
+
+    title_match = _TITLE_TAG_RE.search(html_text)
+    if title_match:
+        return html.unescape(title_match.group(1)).strip()
+    return None
+
+
+def _clean_resolved_title(title: str) -> str:
+    cleaned = re.sub(r"\s+", " ", title).strip()
+    if not cleaned:
+        return ""
+
+    parts = [part.strip() for part in _TITLE_SITE_SPLIT_RE.split(cleaned) if part.strip()]
+    if len(parts) >= 2:
+        first, last = parts[0], parts[-1]
+        if len(last) <= 24 and len(first.split()) >= 4:
+            return first
+
+    return cleaned
+
+
+def _resolve_investigation_query(
+    query_text: str,
+    prior_context: dict | None,
+) -> tuple[str, dict | None, list[str]]:
+    trimmed = query_text.strip()
+    if not _looks_like_url(trimmed):
+        return trimmed, prior_context, []
+
+    warnings: list[str] = []
+    page = get_page_fetcher().fetch(trimmed)
+    if hasattr(page, "error_type"):
+        warnings.append(
+            "Submitted URL could not be read, so RhetoriQ used the raw link as the investigation query."
+        )
+        return trimmed, prior_context, warnings
+
+    resolved_title = _clean_resolved_title(_extract_page_title(page.html) or "")
+    if not resolved_title:
+        warnings.append(
+            "Submitted URL loaded, but no readable headline was found, so RhetoriQ used the raw link as the investigation query."
+        )
+        return trimmed, prior_context, warnings
+
+    merged_context = dict(prior_context or {})
+    merged_context["seed_url"] = {
+        "submitted_url": trimmed,
+        "resolved_url": page.final_url,
+        "headline": resolved_title,
+        "source_domain": urlparse(page.final_url).netloc.lower(),
+    }
+    warnings.append(
+        "Submitted URL resolved to a page headline, and retrieval will use that headline to find related coverage."
+    )
+    return resolved_title, merged_context, warnings
 
 
 def _sync_agent_debate_to_band(result: AgentDebateResult) -> AgentDebateResult:
@@ -397,7 +476,7 @@ def _store_report_in_memory(result: FinalReportResult) -> None:
 
 
 def _build_retriever_agent() -> RetrieverAgent:
-    return RetrieverAgent(repository=_investigation_repo)
+    return RetrieverAgent(repository=_investigation_repo, page_fetcher=get_page_fetcher())
 
 
 def _build_investigation_runner() -> InvestigationRunner:
@@ -794,11 +873,15 @@ def get_related_articles(
 
 @router.post("/investigate", response_model=PlannerResponse)
 def investigate(request: PlannerRequest) -> PlannerResponse:
-    redis_context = _build_memory_prior_context(request.query_text)
-    prior_context = _merge_prior_context(request.prior_context, redis_context)
-    plan = plan_investigation(request.query_text, prior_context)
+    resolved_query_text, request_prior_context, url_warnings = _resolve_investigation_query(
+        request.query_text,
+        request.prior_context,
+    )
+    redis_context = _build_memory_prior_context(resolved_query_text)
+    prior_context = _merge_prior_context(request_prior_context, redis_context)
+    plan = plan_investigation(resolved_query_text, prior_context)
     investigation_id = f"inv_{uuid4().hex}"
-    warnings: list[str] = []
+    warnings: list[str] = list(url_warnings)
 
     if get_settings().DEMO_MODE:
         warnings.append(
@@ -812,7 +895,7 @@ def investigate(request: PlannerRequest) -> PlannerResponse:
             f"{len(counts['related_articles'])} related article(s) as prior context."
         )
 
-    _investigation_repo.save_plan(investigation_id, request.query_text, plan)
+    _investigation_repo.save_plan(investigation_id, resolved_query_text, plan)
     _publish_band_stage_event(
         investigation_id,
         stage="planner",
@@ -839,7 +922,7 @@ def investigate(request: PlannerRequest) -> PlannerResponse:
     _update_workspace_cache(investigation_id)
     return PlannerResponse(
         investigation_id=investigation_id,
-        query_text=request.query_text,
+        query_text=resolved_query_text,
         plan=plan,
         warnings=warnings,
     )

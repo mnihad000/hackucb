@@ -32,7 +32,10 @@ export function buildInvestigationExperienceFromWorkspace(
   const report = workspace.report;
   const loopConfidence =
     workspace.research_loop?.confidence_dimensions.synthesis_confidence.score;
-  const title = report?.report_title ?? `${workspace.plan?.topic ?? "Live"} Investigation`;
+  const title =
+    report?.report_title ??
+    workspace.query_text ??
+    `${workspace.plan?.topic ?? "Live"} Investigation`;
   const summary =
     report?.report_summary ??
     workspace.analyst?.draft_report_sections.executive_summary ??
@@ -233,6 +236,7 @@ function buildFlowchartData(
     label: "Current narrative state",
     subtitle:
       workspace.report?.report_title ??
+      workspace.query_text ??
       workspace.plan?.canonical_phrase ??
       workspace.plan?.topic ??
       "Latest narrative snapshot",

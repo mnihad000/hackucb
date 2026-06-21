@@ -38,29 +38,28 @@ export default function InvestigationNodeCard({
   } = data;
   const receiptCount = countNodeReceipts(node);
   const hasVerified = hasBrowserVerifiedReceipt(node);
-  const handlePosition =
-    layoutSide === "left" ? Position.Right : Position.Left;
   const isLeft = layoutSide === "left";
 
   return (
     <>
       <Handle
         className="!h-0 !min-h-0 !min-w-0 !w-0 !border-0 !bg-transparent !opacity-0"
-        position={handlePosition}
+        id="top"
+        position={Position.Top}
         type="target"
       />
       <motion.div
         animate={{
           opacity: isRevealed ? 1 : 0,
           scale: isRevealed ? 1 : 0.985,
-          y: isRevealed ? 0 : 22,
+          y: isRevealed ? 0 : 28,
         }}
         className="nodrag nopan relative w-[420px]"
         initial={false}
-        transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.68, ease: [0.16, 1, 0.3, 1] }}
       >
         <div
-          className={`absolute top-[5.1rem] z-[1] flex items-center gap-4 ${
+          className={`pointer-events-none absolute top-[5.1rem] z-[1] flex items-center gap-4 ${
             isLeft ? "right-[-11.5rem] flex-row" : "left-[-11.5rem] flex-row-reverse"
           }`}
         >
@@ -71,7 +70,7 @@ export default function InvestigationNodeCard({
         </div>
 
         <div
-          className={`absolute top-[4.25rem] z-[2] flex items-center ${
+          className={`pointer-events-none absolute top-[4.25rem] z-[2] flex items-center ${
             isLeft ? "right-[-8.4rem]" : "left-[-8.4rem]"
           }`}
         >
@@ -90,7 +89,7 @@ export default function InvestigationNodeCard({
         <div
           className={`relative overflow-hidden rounded-[0.55rem] border px-7 py-7 transition duration-300 ${
             containerStyles[visualState]
-          } ${isHighlighted ? "-translate-y-1" : ""}`}
+          } ${isHighlighted ? "ring-1 ring-[rgba(0,0,0,0.18)]" : ""}`}
         >
           <div className="relative">
             <p className="text-[0.66rem] font-semibold uppercase tracking-[0.26em] text-[rgba(18,18,18,0.54)]">
@@ -147,7 +146,8 @@ export default function InvestigationNodeCard({
       </motion.div>
       <Handle
         className="!h-0 !min-h-0 !min-w-0 !w-0 !border-0 !bg-transparent !opacity-0"
-        position={handlePosition}
+        id="bottom"
+        position={Position.Bottom}
         type="source"
       />
     </>

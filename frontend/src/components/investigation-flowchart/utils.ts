@@ -10,11 +10,26 @@ import type {
 
 export const FLOW_NODE_WIDTH = 420;
 export const FLOW_NODE_HEIGHT = 204;
-export const TIMELINE_AXIS_X = 760;
-export const FLOW_STAGE_PADDING_TOP = 140;
-export const FLOW_STAGE_PADDING_RIGHT = 260;
-export const FLOW_STAGE_PADDING_BOTTOM = 180;
-export const FLOW_STAGE_PADDING_LEFT = 260;
+export const TIMELINE_AXIS_X = 1180;
+export const FLOW_STAGE_PADDING_TOP = 180;
+export const FLOW_STAGE_PADDING_RIGHT = 420;
+export const FLOW_STAGE_PADDING_BOTTOM = 260;
+export const FLOW_STAGE_PADDING_LEFT = 420;
+
+const TREE_TOP_Y = 72;
+const TREE_CENTER_X = 970;
+const TRUNK_SPACING_Y = 420;
+const BRANCH_COLUMN_GAP = 760;
+const BRANCH_ROW_GAP = 320;
+const BRANCH_STEM_LENGTH = 96;
+const CARD_SAFE_GUTTER = 96;
+const BRANCH_JOIN_OFFSET_X = 110;
+const CARD_CENTER_X = FLOW_NODE_WIDTH / 2;
+const CARD_TOP_Y = 0;
+const CARD_BOTTOM_Y = FLOW_NODE_HEIGHT;
+
+type TreeSide = "left" | "right";
+type TreeEdgeKind = "trunk" | "branch";
 
 export type InvestigationFlowNodeData = {
   node: InvestigationNode;
@@ -26,6 +41,16 @@ export type InvestigationFlowNodeData = {
   layoutSide: "left" | "right";
 };
 
+export type TreeConnectorPoint = {
+  x: number;
+  y: number;
+};
+
+export type TreeConnectorPath = {
+  points: TreeConnectorPoint[];
+  kind: TreeEdgeKind;
+};
+
 export type InvestigationFlowEdgeData = {
   edge: InvestigationEdge;
   variant: "main" | "counter" | "uncertain" | "related";
@@ -35,6 +60,7 @@ export type InvestigationFlowEdgeData = {
   revealDirection: RevealDirection;
   revealDurationMs: number;
   showLabel: boolean;
+  treePath: TreeConnectorPath;
 };
 
 export type InvestigationFlowNode = Node<
@@ -87,17 +113,22 @@ type PathResult = {
   nodeIds: Set<string>;
 };
 
-const PRESET_POSITIONS: Record<string, XYPosition> = {
-  "uncertain-earlier-mention": { x: 180, y: 120 },
-  "first-observed": { x: 900, y: 300 },
-  "community-pickup": { x: 180, y: 500 },
-  "policy-blogs": { x: 900, y: 700 },
-  "local-news": { x: 180, y: 900 },
-  "advocacy-framing": { x: 900, y: 1100 },
-  "official-transcript": { x: 900, y: 1300 },
-  "counter-savings": { x: 180, y: 1500 },
-  "national-pickup": { x: 180, y: 1700 },
-  "current-narrative": { x: 900, y: 1900 },
+type TreeLayout = {
+  bounds: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
+  edgePaths: Map<string, TreeConnectorPath>;
+  positions: Record<string, XYPosition>;
+  trunkNodeIds: string[];
+};
+
+type BranchAssignment = {
+  anchorId: string;
+  branchOrder: number;
+  side: TreeSide;
 };
 
 export function getNodeTypeLabel(nodeType: InvestigationNode["nodeType"]) {
@@ -205,125 +236,12 @@ export function filterFlowchartData(
   };
 }
 
-function getFallbackPositions(data: InvestigationFlowchartData) {
-  const nodeById = new Map(data.nodes.map((node) => [node.id, node]));
-  const incomingCounts = new Map<string, number>(
-    data.nodes.map((node) => [node.id, 0]),
-  );
-  const outgoing = new Map<string, string[]>();
-
-  for (const edge of data.edges) {
-    incomingCounts.set(edge.target, (incomingCounts.get(edge.target) ?? 0) + 1);
-    const next = outgoing.get(edge.source) ?? [];
-    next.push(edge.target);
-    outgoing.set(edge.source, next);
-  }
-
-  const queue = data.nodes
-    .filter((node) => (incomingCounts.get(node.id) ?? 0) === 0)
-    .map((node) => node.id);
-  const ordered: string[] = [];
-
-  while (queue.length > 0) {
-    const currentId = queue.shift();
-
-    if (!currentId) {
-      continue;
-    }
-
-    ordered.push(currentId);
-
-    for (const nextId of outgoing.get(currentId) ?? []) {
-      const remaining = (incomingCounts.get(nextId) ?? 1) - 1;
-      incomingCounts.set(nextId, remaining);
-
-      if (remaining === 0) {
-        queue.push(nextId);
-      }
-    }
-  }
-
-  const depthMap = new Map<string, number>();
-
-  for (const nodeId of ordered) {
-    const parentEdges = data.edges.filter((edge) => edge.target === nodeId);
-    const depth =
-      parentEdges.length === 0
-        ? 0
-        : Math.max(
-            ...parentEdges.map(
-              (edge) => (depthMap.get(edge.source) ?? 0) + 1,
-            ),
-          );
-
-    depthMap.set(nodeId, depth);
-  }
-
-  const laneBase: Record<InvestigationNode["nodeType"], number> = {
-    amplification: 2,
-    counter_narrative: 4,
-    current: 2,
-    first_observed: 2,
-    media_pickup: 2,
-    official_mention: 1,
-    related: 2,
-    uncertain: 0,
-  };
-  const laneCounts = new Map<string, number>();
-  const positions: Record<string, XYPosition> = {};
-
-  for (const [index, nodeId] of data.nodes.map((node, order) => [order, node.id] as const)) {
-    const node = nodeById.get(nodeId);
-
-    if (!node) {
-      continue;
-    }
-
-    const depth = depthMap.get(nodeId) ?? index;
-    const lane = laneBase[node.nodeType];
-    const laneKey = `${depth}-${lane}`;
-    const laneOffset = laneCounts.get(laneKey) ?? 0;
-    laneCounts.set(laneKey, laneOffset + 1);
-
-    positions[nodeId] = {
-      x: 60 + depth * 360,
-      y: 64 + lane * 160 + laneOffset * 26,
-    };
-  }
-
-  return positions;
-}
-
 export function getNodePositions(data: InvestigationFlowchartData) {
-  const fallbackPositions = getFallbackPositions(data);
-  const positions: Record<string, XYPosition> = {};
-
-  for (const node of data.nodes) {
-    positions[node.id] = PRESET_POSITIONS[node.id] ?? fallbackPositions[node.id];
-  }
-
-  return positions;
+  return getTreeLayout(data).positions;
 }
 
 export function getGraphViewportBounds(data: InvestigationFlowchartData) {
-  const positions = getNodePositions(data);
-  const values = Object.values(positions);
-
-  const minX = Math.min(...values.map((position) => position.x)) - FLOW_STAGE_PADDING_LEFT;
-  const minY = Math.min(...values.map((position) => position.y)) - FLOW_STAGE_PADDING_TOP;
-  const maxX =
-    Math.max(...values.map((position) => position.x + FLOW_NODE_WIDTH)) +
-    FLOW_STAGE_PADDING_RIGHT;
-  const maxY =
-    Math.max(...values.map((position) => position.y + FLOW_NODE_HEIGHT)) +
-    FLOW_STAGE_PADDING_BOTTOM;
-
-  return {
-    maxX,
-    maxY,
-    minX,
-    minY,
-  };
+  return getTreeLayout(data).bounds;
 }
 
 function getIncomingEdges(data: InvestigationFlowchartData) {
@@ -374,13 +292,22 @@ function isUncertainLike(
   );
 }
 
-function getMainPathNodeIds(data: InvestigationFlowchartData) {
+function getTrunkNodeIds(data: InvestigationFlowchartData) {
   const nodeById = new Map(data.nodes.map((node) => [node.id, node]));
   const incoming = getIncomingEdges(data);
-  const positions = getNodePositions(data);
-  const mainPathNodeIds: string[] = [data.currentNodeId];
+  const trunkNodeIds: string[] = [data.currentNodeId];
   let cursorId = data.currentNodeId;
-  const visitedNodes = new Set(mainPathNodeIds);
+  const visitedNodes = new Set(trunkNodeIds);
+  const typePriority: Record<InvestigationNode["nodeType"], number> = {
+    media_pickup: 0,
+    amplification: 1,
+    first_observed: 2,
+    related: 3,
+    official_mention: 4,
+    counter_narrative: 5,
+    uncertain: 6,
+    current: 7,
+  };
 
   while (true) {
     const candidates = (incoming.get(cursorId) ?? []).filter((edge) => {
@@ -397,108 +324,275 @@ function getMainPathNodeIds(data: InvestigationFlowchartData) {
       break;
     }
 
-    candidates.sort(
-      (left, right) =>
-        (positions[right.source]?.x ?? 0) - (positions[left.source]?.x ?? 0),
-    );
+    candidates.sort((left, right) => {
+      const leftNode = nodeById.get(left.source);
+      const rightNode = nodeById.get(right.source);
+      const typeDelta =
+        typePriority[leftNode?.nodeType ?? "uncertain"] -
+        typePriority[rightNode?.nodeType ?? "uncertain"];
+      if (typeDelta !== 0) {
+        return typeDelta;
+      }
+
+      return left.source.localeCompare(right.source);
+    });
 
     const nextEdge = candidates[0];
-
     if (visitedNodes.has(nextEdge.source)) {
       break;
     }
 
-    mainPathNodeIds.push(nextEdge.source);
+    trunkNodeIds.push(nextEdge.source);
     visitedNodes.add(nextEdge.source);
     cursorId = nextEdge.source;
   }
 
-  return mainPathNodeIds;
+  return trunkNodeIds;
+}
+
+function getBranchAnchorPriority(node: InvestigationNode) {
+  switch (node.nodeType) {
+    case "official_mention":
+      return 0;
+    case "related":
+      return 1;
+    case "counter_narrative":
+      return 2;
+    case "uncertain":
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+function getBranchSide(node: InvestigationNode): TreeSide {
+  switch (node.nodeType) {
+    case "official_mention":
+    case "uncertain":
+      return "left";
+    default:
+      return "right";
+  }
+}
+
+function getTreeLayout(data: InvestigationFlowchartData): TreeLayout {
+  const positions: Record<string, XYPosition> = {};
+  const edgePaths = new Map<string, TreeConnectorPath>();
+  const trunkNodeIds = getTrunkNodeIds(data);
+  const trunkNodeIdSet = new Set(trunkNodeIds);
+  const trunkIndexById = new Map(trunkNodeIds.map((nodeId, index) => [nodeId, index]));
+  const incoming = getIncomingEdges(data);
+  const outgoing = getOutgoingEdges(data);
+  const edgesByPair = new Map<string, InvestigationEdge>();
+  const branchAssignments = new Map<string, BranchAssignment>();
+  const branchCounts = new Map<string, number>();
+
+  for (const edge of data.edges) {
+    edgesByPair.set(`${edge.source}=>${edge.target}`, edge);
+  }
+
+  trunkNodeIds.forEach((nodeId, index) => {
+    positions[nodeId] = {
+      x: TREE_CENTER_X,
+      y: TREE_TOP_Y + index * TRUNK_SPACING_Y,
+    };
+  });
+
+  const branchNodes = data.nodes
+    .filter((node) => !trunkNodeIdSet.has(node.id))
+    .sort((left, right) => {
+      const leftCandidates = [
+        ...(outgoing.get(left.id) ?? []).map((edge) => edge.target),
+        ...(incoming.get(left.id) ?? []).map((edge) => edge.source),
+      ];
+      const rightCandidates = [
+        ...(outgoing.get(right.id) ?? []).map((edge) => edge.target),
+        ...(incoming.get(right.id) ?? []).map((edge) => edge.source),
+      ];
+      const leftAnchorIndex = Math.min(
+        ...leftCandidates
+          .map((nodeId) => trunkIndexById.get(nodeId))
+          .filter((value): value is number => value !== undefined),
+        Number.POSITIVE_INFINITY,
+      );
+      const rightAnchorIndex = Math.min(
+        ...rightCandidates
+          .map((nodeId) => trunkIndexById.get(nodeId))
+          .filter((value): value is number => value !== undefined),
+        Number.POSITIVE_INFINITY,
+      );
+      if (leftAnchorIndex !== rightAnchorIndex) {
+        return leftAnchorIndex - rightAnchorIndex;
+      }
+
+      const priorityDelta = getBranchAnchorPriority(left) - getBranchAnchorPriority(right);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+
+      return left.label.localeCompare(right.label);
+    });
+
+  for (const node of branchNodes) {
+    const connectedTrunkIds = [
+      ...(outgoing.get(node.id) ?? []).map((edge) => edge.target),
+      ...(incoming.get(node.id) ?? []).map((edge) => edge.source),
+    ]
+      .filter((nodeId) => trunkNodeIdSet.has(nodeId))
+      .sort((left, right) => (trunkIndexById.get(left) ?? 999) - (trunkIndexById.get(right) ?? 999));
+    const anchorId = connectedTrunkIds[0] ?? trunkNodeIds[Math.min(1, trunkNodeIds.length - 1)];
+    const side = getBranchSide(node);
+    const branchKey = `${anchorId}:${side}`;
+    const branchOrder = branchCounts.get(branchKey) ?? 0;
+    branchCounts.set(branchKey, branchOrder + 1);
+    branchAssignments.set(node.id, {
+      anchorId,
+      branchOrder,
+      side,
+    });
+
+    const anchorPosition = positions[anchorId];
+    const direction = side === "left" ? -1 : 1;
+    positions[node.id] = {
+      x: TREE_CENTER_X + direction * BRANCH_COLUMN_GAP,
+      y: anchorPosition.y + 110 + branchOrder * BRANCH_ROW_GAP,
+    };
+  }
+
+  for (let index = 0; index < trunkNodeIds.length - 1; index += 1) {
+    const sourceId = trunkNodeIds[index];
+    const targetId = trunkNodeIds[index + 1];
+    const edge = edgesByPair.get(`${targetId}=>${sourceId}`);
+
+    if (!edge) {
+      continue;
+    }
+
+    const sourcePosition = positions[sourceId];
+    const targetPosition = positions[targetId];
+    const trunkX = sourcePosition.x + CARD_CENTER_X;
+    const startY = sourcePosition.y + CARD_BOTTOM_Y;
+    const endY = targetPosition.y + CARD_TOP_Y;
+
+    edgePaths.set(edge.id, {
+      kind: "trunk",
+      points: [
+        { x: trunkX, y: startY },
+        { x: trunkX, y: endY },
+      ],
+    });
+  }
+
+  for (const node of branchNodes) {
+    const assignment = branchAssignments.get(node.id);
+
+    if (!assignment) {
+      continue;
+    }
+
+    const anchorPosition = positions[assignment.anchorId];
+    const branchPosition = positions[node.id];
+    const direction = assignment.side === "left" ? -1 : 1;
+    const branchLaneX =
+      anchorPosition.x +
+      CARD_CENTER_X +
+      direction * (CARD_CENTER_X + CARD_SAFE_GUTTER + assignment.branchOrder * 38);
+    const startY = anchorPosition.y + CARD_BOTTOM_Y;
+    const splitY = startY + BRANCH_STEM_LENGTH;
+    const endX =
+      branchPosition.x +
+      (assignment.side === "left" ? FLOW_NODE_WIDTH - BRANCH_JOIN_OFFSET_X : BRANCH_JOIN_OFFSET_X);
+    const endY = branchPosition.y + CARD_TOP_Y + 74;
+
+    const possibleEdges = [
+      ...(outgoing.get(node.id) ?? []).filter((edge) => trunkNodeIdSet.has(edge.target)),
+      ...(incoming.get(node.id) ?? []).filter((edge) => trunkNodeIdSet.has(edge.source)),
+    ];
+    const edge = possibleEdges[0];
+
+    if (!edge) {
+      continue;
+    }
+
+    edgePaths.set(edge.id, {
+      kind: "branch",
+      points: [
+        { x: anchorPosition.x + CARD_CENTER_X, y: startY },
+        { x: branchLaneX, y: splitY },
+        { x: endX, y: endY },
+      ],
+    });
+  }
+
+  const values = Object.values(positions);
+  const minX = Math.min(...values.map((position) => position.x)) - FLOW_STAGE_PADDING_LEFT;
+  const minY = Math.min(...values.map((position) => position.y)) - FLOW_STAGE_PADDING_TOP;
+  const maxX =
+    Math.max(...values.map((position) => position.x + FLOW_NODE_WIDTH)) +
+    FLOW_STAGE_PADDING_RIGHT;
+  const maxY =
+    Math.max(...values.map((position) => position.y + FLOW_NODE_HEIGHT)) +
+    FLOW_STAGE_PADDING_BOTTOM;
+
+  return {
+    bounds: {
+      maxX,
+      maxY,
+      minX,
+      minY,
+    },
+    edgePaths,
+    positions,
+    trunkNodeIds,
+  };
 }
 
 function buildBranchPhase(
   edges: InvestigationEdge[],
-  positions: Record<string, XYPosition>,
-  initialVisibleNodeIds: Set<string>,
+  visibleNodeIds: Set<string>,
+  branchAssignments: Map<string, BranchAssignment>,
 ): RevealStep[] {
-  const steps: RevealStep[] = [];
-  const visibleNodeIds = new Set(initialVisibleNodeIds);
   const remainingEdges = [...edges];
+  const steps: RevealStep[] = [];
+  const visible = new Set(visibleNodeIds);
 
   while (true) {
-    const candidates = remainingEdges.filter((edge) => {
-      const sourceVisible = visibleNodeIds.has(edge.source);
-      const targetVisible = visibleNodeIds.has(edge.target);
+    const nextEdge = remainingEdges.find((edge) => {
+      const sourceVisible = visible.has(edge.source);
+      const targetVisible = visible.has(edge.target);
 
       return sourceVisible !== targetVisible;
     });
 
-    if (candidates.length === 0) {
+    if (!nextEdge) {
       break;
     }
 
-    candidates.sort((left, right) => {
-      const leftVisibleId = visibleNodeIds.has(left.source)
-        ? left.source
-        : left.target;
-      const rightVisibleId = visibleNodeIds.has(right.source)
-        ? right.source
-        : right.target;
-
-      return (positions[rightVisibleId]?.x ?? 0) - (positions[leftVisibleId]?.x ?? 0);
-    });
-
-    const nextEdge = candidates[0];
     const edgeIndex = remainingEdges.findIndex((edge) => edge.id === nextEdge.id);
-
     if (edgeIndex >= 0) {
       remainingEdges.splice(edgeIndex, 1);
     }
 
-    const sourceVisible = visibleNodeIds.has(nextEdge.source);
+    const sourceVisible = visible.has(nextEdge.source);
     const cameraAnchorId = sourceVisible ? nextEdge.source : nextEdge.target;
     const cameraNodeId = sourceVisible ? nextEdge.target : nextEdge.source;
+    const assignment = branchAssignments.get(cameraNodeId);
 
     steps.push({
-      cameraAnchorId,
+      cameraAnchorId: assignment?.anchorId ?? cameraAnchorId,
       cameraNodeId,
       direction: sourceVisible ? "forward" : "reverse",
       id: nextEdge.id,
       kind: "edge",
     });
     steps.push({
-      cameraAnchorId,
+      cameraAnchorId: assignment?.anchorId ?? cameraAnchorId,
       cameraNodeId,
       id: cameraNodeId,
       kind: "node",
     });
-    visibleNodeIds.add(cameraNodeId);
-  }
 
-  remainingEdges.sort((left, right) => {
-    const leftMax = Math.max(
-      positions[left.source]?.x ?? 0,
-      positions[left.target]?.x ?? 0,
-    );
-    const rightMax = Math.max(
-      positions[right.source]?.x ?? 0,
-      positions[right.target]?.x ?? 0,
-    );
-
-    return rightMax - leftMax;
-  });
-
-  for (const edge of remainingEdges) {
-    const sourceX = positions[edge.source]?.x ?? 0;
-    const targetX = positions[edge.target]?.x ?? 0;
-
-    steps.push({
-      cameraAnchorId: sourceX >= targetX ? edge.source : edge.target,
-      cameraNodeId: sourceX >= targetX ? edge.target : edge.source,
-      direction: sourceX <= targetX ? "forward" : "reverse",
-      id: edge.id,
-      kind: "edge",
-    });
+    visible.add(cameraNodeId);
   }
 
   return steps;
@@ -508,36 +602,56 @@ export function buildRevealPlan(
   data: InvestigationFlowchartData,
 ): InvestigationRevealPlan {
   const nodeById = new Map(data.nodes.map((node) => [node.id, node]));
-  const positions = getNodePositions(data);
-  const mainPathNodeIds = getMainPathNodeIds(data);
-  const mainPathNodeIdSet = new Set(mainPathNodeIds);
-  const mainPathEdgeIds = new Set<string>();
+  const trunkNodeIds = getTrunkNodeIds(data);
+  const trunkNodeIdSet = new Set(trunkNodeIds);
+  const incoming = getIncomingEdges(data);
+  const outgoing = getOutgoingEdges(data);
+  const trunkEdgeIds = new Set<string>();
   const mainSteps: RevealStep[] = [];
+  const branchAssignments = new Map<string, BranchAssignment>();
 
-  for (let index = 1; index < mainPathNodeIds.length; index += 1) {
-    const sourceId = mainPathNodeIds[index];
-    const targetId = mainPathNodeIds[index - 1];
+  for (const node of data.nodes) {
+    if (trunkNodeIdSet.has(node.id)) {
+      continue;
+    }
+
+    const connectedTrunkIds = [
+      ...(outgoing.get(node.id) ?? []).map((edge) => edge.target),
+      ...(incoming.get(node.id) ?? []).map((edge) => edge.source),
+    ].filter((nodeId) => trunkNodeIdSet.has(nodeId));
+
+    if (connectedTrunkIds[0]) {
+      branchAssignments.set(node.id, {
+        anchorId: connectedTrunkIds[0],
+        branchOrder: 0,
+        side: getBranchSide(node),
+      });
+    }
+  }
+
+  for (let index = 0; index < trunkNodeIds.length - 1; index += 1) {
+    const parentId = trunkNodeIds[index];
+    const childId = trunkNodeIds[index + 1];
     const edge = data.edges.find(
-      (candidate) =>
-        candidate.source === sourceId && candidate.target === targetId,
+      (candidate) => candidate.source === childId && candidate.target === parentId,
     );
 
     if (!edge) {
       continue;
     }
 
-    mainPathEdgeIds.add(edge.id);
+    trunkEdgeIds.add(edge.id);
     mainSteps.push({
-      cameraAnchorId: targetId,
-      cameraNodeId: sourceId,
+      cameraAnchorId: parentId,
+      cameraNodeId: childId,
       direction: "reverse",
       id: edge.id,
       kind: "edge",
     });
     mainSteps.push({
-      cameraAnchorId: targetId,
-      cameraNodeId: sourceId,
-      id: sourceId,
+      cameraAnchorId: parentId,
+      cameraNodeId: childId,
+      id: childId,
       kind: "node",
     });
   }
@@ -547,7 +661,7 @@ export function buildRevealPlan(
     const targetNode = nodeById.get(edge.target);
 
     return (
-      !mainPathEdgeIds.has(edge.id) &&
+      !trunkEdgeIds.has(edge.id) &&
       !isCounterLike(edge, sourceNode, targetNode) &&
       !isUncertainLike(edge, sourceNode, targetNode)
     );
@@ -582,21 +696,17 @@ export function buildRevealPlan(
       id: "supporting",
       steps: buildBranchPhase(
         supportingEdges,
-        positions,
-        new Set(mainPathNodeIdSet),
+        trunkNodeIdSet,
+        branchAssignments,
       ),
     },
     {
       id: "counter",
-      steps: buildBranchPhase(counterEdges, positions, new Set(mainPathNodeIdSet)),
+      steps: buildBranchPhase(counterEdges, trunkNodeIdSet, branchAssignments),
     },
     {
       id: "uncertain",
-      steps: buildBranchPhase(
-        uncertainEdges,
-        positions,
-        new Set(mainPathNodeIdSet),
-      ),
+      steps: buildBranchPhase(uncertainEdges, trunkNodeIdSet, branchAssignments),
     },
   ];
 
@@ -743,9 +853,7 @@ export function createFlowNodes({
         isHighlighted: highlightedNodeIds.has(node.id),
         isRevealed: revealedNodeIds.has(node.id),
         layoutSide:
-          (position?.x ?? 0) + FLOW_NODE_WIDTH / 2 < TIMELINE_AXIS_X
-            ? "left"
-            : "right",
+          (position?.x ?? 0) + FLOW_NODE_WIDTH / 2 < TIMELINE_AXIS_X ? "left" : "right",
         node,
         showReceipts,
         visualState,
@@ -788,30 +896,37 @@ export function createFlowEdges({
   revealDurations: Map<string, number>;
   revealedEdgeIds: Set<string>;
 }): InvestigationFlowEdge[] {
-  return data.edges.map((edge) => {
-    const isDimmed =
-      isFocusMode &&
-      (dimmedNodeIds.has(edge.source) || dimmedNodeIds.has(edge.target)) &&
-      !highlightedEdgeIds.has(edge.id);
+  const layout = getTreeLayout(data);
 
-    return {
-      animated: false,
-      data: {
-        edge,
-        isDimmed,
-        isHighlighted: highlightedEdgeIds.has(edge.id),
-        isRevealed: revealedEdgeIds.has(edge.id),
-        revealDirection: revealDirections.get(edge.id) ?? "forward",
-        revealDurationMs: revealDurations.get(edge.id) ?? 640,
-        showLabel: highlightedEdgeIds.has(edge.id),
-        variant: getEdgeVariant(edge),
-      },
-      id: edge.id,
-      selectable: false,
-      source: edge.source,
-      target: edge.target,
-      type: "investigationEdge",
-      zIndex: highlightedEdgeIds.has(edge.id) ? 7 : 3,
-    };
-  });
+  return data.edges
+    .filter((edge) => layout.edgePaths.has(edge.id))
+    .map((edge) => {
+      const isDimmed =
+        isFocusMode &&
+        (dimmedNodeIds.has(edge.source) || dimmedNodeIds.has(edge.target)) &&
+        !highlightedEdgeIds.has(edge.id);
+
+      return {
+        animated: false,
+        data: {
+          edge,
+          isDimmed,
+          isHighlighted: highlightedEdgeIds.has(edge.id),
+          isRevealed: revealedEdgeIds.has(edge.id),
+          revealDirection: revealDirections.get(edge.id) ?? "forward",
+          revealDurationMs: revealDurations.get(edge.id) ?? 640,
+          showLabel: highlightedEdgeIds.has(edge.id),
+          treePath: layout.edgePaths.get(edge.id)!,
+          variant: getEdgeVariant(edge),
+        },
+        id: edge.id,
+        selectable: false,
+        source: edge.source,
+        sourceHandle: "bottom",
+        target: edge.target,
+        targetHandle: "top",
+        type: "investigationEdge",
+        zIndex: highlightedEdgeIds.has(edge.id) ? 7 : 3,
+      };
+    });
 }

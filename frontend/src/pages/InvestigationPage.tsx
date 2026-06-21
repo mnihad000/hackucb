@@ -28,6 +28,7 @@ export default function InvestigationPage() {
   const { id = "" } = useParams();
   const [searchParams] = useSearchParams();
   const query = searchParams.get("q") ?? undefined;
+  const isMockRequest = isMockInvestigationRequest(id, searchParams);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isNotFound, setIsNotFound] = useState(false);
   const [workspace, setWorkspace] = useState<LiveInvestigationWorkspace | null>(null);
@@ -47,7 +48,7 @@ export default function InvestigationPage() {
       setIsNotFound(false);
 
       try {
-        if (isMockInvestigationRequest(id, searchParams)) {
+        if (isMockRequest) {
           const nextWorkspace = getMockInvestigationWorkspace(id, query);
           if (cancelled) {
             return;
@@ -99,7 +100,7 @@ export default function InvestigationPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, query, searchParams]);
+  }, [id, isMockRequest, query, searchParams]);
 
   const experience = workspace
     ? buildInvestigationExperienceFromWorkspace(workspace)
@@ -190,7 +191,15 @@ export default function InvestigationPage() {
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(18rem,24rem)]">
               <div className="space-y-6">
                 <InvestigationBriefCard workspace={workspace} />
-                {experience ? <InvestigationFlowchart data={experience.flowchartData} /> : null}
+                <InvestigationFlowchart
+                  data={experience?.flowchartData}
+                  isLoading={
+                    !experience ||
+                    (!isMockRequest &&
+                      !workspace?.report &&
+                      !workspace?.research_loop)
+                  }
+                />
                 {workspace.research_loop ? (
                   <ResearchLoopCard workspace={workspace} />
                 ) : null}

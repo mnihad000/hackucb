@@ -1,6 +1,5 @@
 import {
   EdgeLabelRenderer,
-  getSmoothStepPath,
   type EdgeProps,
 } from "@xyflow/react";
 import { motion } from "framer-motion";
@@ -36,44 +35,20 @@ const edgeStyles = {
 export default function AnimatedInvestigationEdge({
   data,
   markerEnd,
-  sourcePosition,
-  sourceX,
-  sourceY,
-  targetPosition,
-  targetX,
-  targetY,
 }: EdgeProps<InvestigationFlowEdge>) {
   if (!data) {
     return null;
   }
 
-  const pathArgs =
+  const points =
     data.revealDirection === "reverse"
-      ? {
-          borderRadius: 14,
-          offset: 12,
-          sourcePosition: targetPosition,
-          sourceX: targetX,
-          sourceY: targetY,
-          targetPosition: sourcePosition,
-          targetX: sourceX,
-          targetY: sourceY,
-        }
-      : {
-          borderRadius: 14,
-          offset: 12,
-          sourcePosition,
-          sourceX,
-          sourceY,
-          targetPosition,
-          targetX,
-          targetY,
-        };
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
-    ...pathArgs,
-    borderRadius: 6,
-    offset: 10,
-  });
+      ? [...data.treePath.points].reverse()
+      : data.treePath.points;
+  const edgePath = points.reduce((path, point, index) => {
+    const prefix = index === 0 ? "M" : "L";
+    return `${path}${index === 0 ? "" : " "}${prefix} ${point.x} ${point.y}`;
+  }, "");
+  const labelPoint = points[Math.floor(points.length / 2)] ?? points[0];
   const style = edgeStyles[data.variant];
   const duration = data.revealDurationMs / 1000;
   const baseOpacity = data.isDimmed ? 0.12 : data.isHighlighted ? 1 : 0.72;
@@ -116,8 +91,8 @@ export default function AnimatedInvestigationEdge({
           <div
             className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 border border-[rgba(14,14,14,0.24)] bg-[rgba(255,255,253,0.96)] px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-[rgba(15,15,15,0.62)] shadow-[0_12px_24px_-22px_rgba(0,0,0,0.22)]"
             style={{
-              left: `${labelX}px`,
-              top: `${labelY}px`,
+              left: `${labelPoint.x}px`,
+              top: `${labelPoint.y}px`,
             }}
           >
             {data.edge.label}

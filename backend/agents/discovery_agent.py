@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from models.investigation import InvestigationPlan, InvestigationPlanTimeWindow, RawPage, SearchResult
 from models.trending import DiscoveryQuery, DiscoveryRunStats
 from services.document_normalizer import DocumentNormalizer
-from services.page_fetcher import HttpPageFetcher
+from services.page_fetcher import get_page_fetcher, HttpPageFetcher
 from services.search_provider import MultiSearchProvider
 
 
@@ -61,7 +61,7 @@ class DiscoveryAgent:
         cache=None,
     ) -> None:
         self._provider = search_provider or MultiSearchProvider(cache=cache)
-        self._fetcher = page_fetcher or HttpPageFetcher(cache=cache)
+        self._fetcher = page_fetcher or get_page_fetcher(cache=cache)
         self._normalizer = normalizer or DocumentNormalizer()
 
     def build_queries(

@@ -42,11 +42,11 @@ function buildTrunk(data: InvestigationFlowchartData): InvestigationNode[] {
     chain.push(cursor);
     visited.add(cursor);
 
-    const temporal = (incoming.get(cursor) ?? []).filter(
-      (edge) => edge.edgeType === "temporal_sequence",
+    const temporal: InvestigationEdge[] = (incoming.get(cursor) ?? []).filter(
+      (edge: InvestigationEdge) => edge.edgeType === "temporal_sequence",
     );
-    const next = temporal.find(
-      (edge) => nodeById.has(edge.source) && !visited.has(edge.source),
+    const next: InvestigationEdge | undefined = temporal.find(
+      (edge: InvestigationEdge) => nodeById.has(edge.source) && !visited.has(edge.source),
     );
     cursor = next?.source;
   }

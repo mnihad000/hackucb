@@ -43,6 +43,13 @@ export default function InvestigationFlowchart({
           <div className="flex items-center gap-3 text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
             <LegendDot color="var(--accent)" label="Timeline" />
             <LegendDot color="#b06a5b" label="Counter-frame" />
+            <span className="inline-flex items-center gap-1 rounded-md border border-[var(--ink)] bg-[var(--ink)] px-2 py-1 text-[0.6rem] text-white">
+              <svg aria-hidden="true" viewBox="0 0 12 12" className="h-2 w-2 shrink-0" fill="none">
+                <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1.4" />
+                <path d="M3.5 6l1.8 1.8L8.5 4.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Browserbase verified
+            </span>
           </div>
         </div>
 

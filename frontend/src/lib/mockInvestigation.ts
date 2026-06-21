@@ -1097,6 +1097,7 @@ export function getMockInvestigationWorkspace(
       investigation_id: investigationId || DEFAULT_INVESTIGATION_ID,
       plan_snapshot: nextPlan,
     },
+    source_verification: null,
     receipts: {
       ...receipts,
       investigation_id: investigationId || DEFAULT_INVESTIGATION_ID,

@@ -38,6 +38,7 @@ from services.narrative_family_builder import build_narrative_family
 from services.provenance_trace_builder import build_provenance_trace
 from services.skeptic_builder import build_skeptic_review
 from services.source_diversity_builder import build_source_diversity
+from services.source_verification_builder import build_source_verification, verification_map_from_result
 from services.timeline_builder import build_timeline
 from services.verification import VerificationService
 
@@ -290,13 +291,32 @@ class InvestigationRunner:
             analyst,
             claim_counterpoints,
         )
+        source_verification = build_source_verification(
+            investigation_id,
+            prior_documents,
+            cited_document_ids=self._cited_document_ids(report, claim_counterpoints),
+        )
+        self._repository.save_source_verification_result(source_verification, update_stage=False)
+        self._publish_band_stage(
+            investigation_id,
+            stage="source_verification",
+            role="Browserbase Verification Agent",
+            content=(
+                f"Checked {len(source_verification.receipts)} cited source(s): "
+                f"{source_verification.verified_count} verified, "
+                f"{source_verification.metadata_mismatch_count} metadata mismatch, "
+                f"{source_verification.unavailable_count} unavailable, "
+                f"{source_verification.pending_count} pending."
+            ),
+            confidence_label="source_verification",
+        )
         receipts = build_receipts_agent(
             investigation_id,
             run_plan,
             prior_documents,
             report,
             claim_counterpoints,
-            self._verification_map(prior_documents, report, claim_counterpoints),
+            self._verification_map(prior_documents, report, claim_counterpoints, source_verification),
         )
         self._repository.save_receipts_result(receipts)
         self._publish_band_stage(
@@ -409,7 +429,15 @@ class InvestigationRunner:
         documents: list[Document],
         report: FinalReportResult,
         claim_counterpoints,
+        source_verification=None,
     ) -> dict[str, str]:
+        doc_ids = self._cited_document_ids(report, claim_counterpoints)
+        verification_map = verification_map_from_result(source_verification)
+        for doc_id in doc_ids:
+            verification_map.setdefault(doc_id, "pending")
+        return verification_map
+
+    def _cited_document_ids(self, report: FinalReportResult, claim_counterpoints) -> list[str]:
         doc_ids: list[str] = []
         for claim in report.key_claims:
             for citation in [*claim.citations, *claim.counter_citations]:
@@ -418,15 +446,7 @@ class InvestigationRunner:
             for pair in claim_counterpoints.pairs:
                 for citation in [*pair.main_receipts, *pair.counter_receipts]:
                     doc_ids.append(citation.document_id)
-        results = self._verifier.verify_batch(list(dict.fromkeys(doc_ids)), documents)
-        verification_map = {
-            item["doc_id"]: item.get("verification_status", "pending")
-            for item in results
-            if item.get("doc_id")
-        }
-        for doc_id in doc_ids:
-            verification_map.setdefault(doc_id, "pending")
-        return verification_map
+        return list(dict.fromkeys(doc_ids))
 
     def _confidence_dimensions(
         self,

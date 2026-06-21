@@ -110,6 +110,7 @@ export function getTopClaims(workspace: LiveInvestigationWorkspace) {
 export function getLimitations(workspace: LiveInvestigationWorkspace) {
   const values = [
     ...(workspace.report?.limitations ?? []),
+    ...(workspace.source_verification?.limitations ?? []),
     ...(workspace.receipts?.limitations ?? []),
     ...(workspace.narrative_family?.limitations ?? []),
     ...(workspace.agent_debate?.limitations ?? []),
@@ -193,6 +194,8 @@ export function getStageLabel(workspace: LiveInvestigationWorkspace) {
       return "Skeptic review built";
     case "claim_counterpoint":
       return "Claim counterpoints built";
+    case "source_verification":
+      return "Sources verified";
     case "receipts":
       return "Receipts built";
     case "agent_debate":
@@ -643,6 +646,8 @@ function formatStatus(status: LiveInvestigationWorkspace["status"]) {
       return "Skeptic review built";
     case "claim_counterpoint_completed":
       return "Claim counterpoints built";
+    case "source_verification_completed":
+      return "Sources verified";
     case "receipts_completed":
       return "Receipts built";
     case "agent_debate_completed":

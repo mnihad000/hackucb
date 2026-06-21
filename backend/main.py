@@ -96,6 +96,7 @@ def root() -> dict:
             "POST   /api/investigations/{id}/run  (execute supervised research loop)",
             "POST   /api/investigations/{id}/retrieve  (run retriever agent)",
             "POST   /api/investigations/{id}/source-diversity  (build deterministic source diversity artifact)",
+            "POST   /api/investigations/{id}/source-verification  (verify cited sources with Browserbase)",
             "POST   /api/investigations/{id}/timeline  (build deterministic timeline artifact)",
             "POST   /api/investigations/{id}/counter-narratives  (build counter-frame artifact)",
             "POST   /api/investigations/{id}/family  (build narrative family artifact)",

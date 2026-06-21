@@ -41,6 +41,8 @@ from models.investigation import (
     RunInvestigationRequest,
     RetrieveRequest,
     RetrievalResult,
+    SourceVerificationRequest,
+    SourceVerificationResult,
     SourceDiversityRequest,
     SourceDiversityResult,
     TimelineRequest,
@@ -68,6 +70,10 @@ from services.mutation_detection import MutationDetector
 from services.redis_memory import get_redis_memory_service
 from services.retrieval import Retriever
 from services.source_diversity_builder import build_source_diversity as build_source_diversity_artifact
+from services.source_verification_builder import (
+    build_source_verification,
+    verification_map_from_result,
+)
 from services.spike_detection import SpikeDetector
 from services.timeline_builder import build_timeline as build_timeline_artifact
 from services.verification import VerificationService
@@ -232,6 +238,60 @@ def _auto_verify_documents(documents, max_docs: int = 6) -> None:
             get_browserbase_agent().verify_documents(uncached)
     except Exception:
         pass  # never block report generation on verification errors
+
+
+def _collect_cited_document_ids(report, claim_counterpoint_result) -> list[str]:
+    doc_ids: list[str] = []
+    for claim in report.key_claims:
+        for citation in [*claim.citations, *claim.counter_citations]:
+            doc_ids.append(citation.document_id)
+    if claim_counterpoint_result is not None:
+        for pair in claim_counterpoint_result.pairs:
+            for citation in [*pair.main_receipts, *pair.counter_receipts]:
+                doc_ids.append(citation.document_id)
+    return list(dict.fromkeys(doc_ids))
+
+
+def _ensure_source_verification_result(
+    investigation_id: str,
+    documents,
+    *,
+    cited_document_ids: list[str] | None = None,
+    force_refresh: bool = False,
+    max_documents: int | None = None,
+    update_stage: bool = True,
+) -> SourceVerificationResult:
+    cached = None if force_refresh else _investigation_repo.get_source_verification_result(investigation_id)
+    if cached is not None:
+        if cited_document_ids:
+            verified_ids = {receipt.document_id for receipt in cached.receipts}
+            if set(cited_document_ids).issubset(verified_ids):
+                return cached.model_copy(update={"cached": True})
+        else:
+            return cached.model_copy(update={"cached": True})
+
+    result = build_source_verification(
+        investigation_id,
+        documents,
+        cited_document_ids=cited_document_ids,
+        max_documents=max_documents,
+    )
+    _investigation_repo.save_source_verification_result(result, update_stage=update_stage)
+    _publish_band_stage_event(
+        investigation_id,
+        stage="source_verification",
+        role="Browserbase Verification Agent",
+        content=(
+            f"Checked {len(result.receipts)} cited source(s): {result.verified_count} verified, "
+            f"{result.metadata_mismatch_count} metadata mismatch, {result.unavailable_count} unavailable, "
+            f"{result.pending_count} pending."
+        ),
+        metadata={
+            "browserbase_verified_count": result.browserbase_verified_count,
+            "fallback_checked_count": result.fallback_checked_count,
+        },
+    )
+    return result
 
 
 def _build_memory_prior_context(query_text: str) -> dict:
@@ -665,16 +725,7 @@ def _build_base_report_result(
 
 
 def _collect_verification_map(documents, report, claim_counterpoint_result) -> dict[str, str]:
-    doc_ids: list[str] = []
-    for claim in report.key_claims:
-        for citation in [*claim.citations, *claim.counter_citations]:
-            doc_ids.append(citation.document_id)
-    if claim_counterpoint_result is not None:
-        for pair in claim_counterpoint_result.pairs:
-            for citation in [*pair.main_receipts, *pair.counter_receipts]:
-                doc_ids.append(citation.document_id)
-
-    unique_doc_ids = list(dict.fromkeys(doc_ids))
+    unique_doc_ids = _collect_cited_document_ids(report, claim_counterpoint_result)
     results = _verifier.verify_batch(unique_doc_ids, documents)
     verification_map = {
         item["doc_id"]: item.get("verification_status", "pending")
@@ -713,7 +764,17 @@ def _ensure_receipts_and_report(
 
     receipts_result = cached_receipts
     if force_refresh or receipts_result is None:
-        verification_map = _collect_verification_map(documents, base_report, claim_counterpoint_result)
+        cited_document_ids = _collect_cited_document_ids(base_report, claim_counterpoint_result)
+        source_verification = _ensure_source_verification_result(
+            investigation_id,
+            documents,
+            cited_document_ids=cited_document_ids,
+            force_refresh=force_refresh,
+            update_stage=False,
+        )
+        verification_map = verification_map_from_result(source_verification)
+        for doc_id in cited_document_ids:
+            verification_map.setdefault(doc_id, "pending")
         receipts_result = build_receipts_agent(
             investigation_id,
             plan,
@@ -1078,6 +1139,60 @@ def source_diversity(
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Source diversity build failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# POST /api/investigations/{id}/source-verification - verify cited sources with Browserbase
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/investigations/{investigation_id}/source-verification",
+    response_model=SourceVerificationResult,
+)
+def source_verification(
+    investigation_id: str,
+    request: SourceVerificationRequest,
+) -> SourceVerificationResult:
+    if not _investigation_repo.investigation_exists(investigation_id):
+        raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
+
+    plan = _investigation_repo.get_plan(investigation_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Investigation plan for '{investigation_id}' not found.")
+
+    retrieval = _investigation_repo.get_retrieval_result(investigation_id)
+    if retrieval is None:
+        raise HTTPException(status_code=404, detail=f"Retrieval result for '{investigation_id}' not found.")
+
+    documents = _investigation_repo.get_retrieved_documents(investigation_id)
+    if not documents:
+        raise HTTPException(status_code=404, detail="No retrieved documents for this investigation.")
+
+    cited_document_ids = None
+    if request.cited_only:
+        report = _investigation_repo.get_final_report_result(investigation_id)
+        claim_counterpoints = _investigation_repo.get_claim_counterpoint_result(investigation_id)
+        cited_document_ids = (
+            _collect_cited_document_ids(report, claim_counterpoints)
+            if report is not None
+            else list(dict.fromkeys(retrieval.high_relevance_document_ids or retrieval.retrieved_document_ids))
+        )
+
+    try:
+        result = _ensure_source_verification_result(
+            investigation_id,
+            documents,
+            cited_document_ids=cited_document_ids,
+            force_refresh=request.force_refresh,
+            max_documents=request.max_documents,
+            update_stage=True,
+        )
+        _update_workspace_cache(investigation_id)
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Source verification failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -1541,10 +1656,6 @@ def final_report(
             source_diversity_result = build_source_diversity_artifact(investigation_id, plan, retrieval, documents)
             _investigation_repo.save_source_diversity_result(source_diversity_result)
 
-        # Auto-verify sources via Browserbase before assembling the report.
-        # Populates Redis cache so _collect_verification_map() returns real statuses.
-        _auto_verify_documents(documents)
-
         result, receipts_result, claim_counterpoint_result = _ensure_receipts_and_report(
             investigation_id,
             plan,
@@ -1662,8 +1773,6 @@ def get_receipts(narrative_id: str) -> list[dict]:
 
 @router.post("/investigations/{investigation_id}/verify")
 def verify_investigation_sources(investigation_id: str, max_docs: int = 6) -> list[dict]:
-    from agents.browserbase_agent import get_browserbase_agent
-
     if not _investigation_repo.investigation_exists(investigation_id):
         raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
 
@@ -1671,9 +1780,16 @@ def verify_investigation_sources(investigation_id: str, max_docs: int = 6) -> li
     if not documents:
         raise HTTPException(status_code=404, detail="No retrieved documents for this investigation.")
 
-    agent = get_browserbase_agent()
-    receipts = agent.verify_documents(documents[:max_docs])
-    return [r.to_dict() for r in receipts]
+    result = _ensure_source_verification_result(
+        investigation_id,
+        documents,
+        cited_document_ids=None,
+        force_refresh=True,
+        max_documents=max_docs,
+        update_stage=True,
+    )
+    _update_workspace_cache(investigation_id)
+    return [receipt.model_dump(mode="json") for receipt in result.receipts]
 
 
 # ---------------------------------------------------------------------------

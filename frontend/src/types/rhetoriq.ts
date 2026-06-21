@@ -193,11 +193,15 @@ export type InvestigationStage =
   | "timeline"
   | "counter_narrative"
   | "narrative_family"
+  | "gap_analysis"
+  | "provenance"
   | "analyst"
+  | "skeptic"
   | "claim_counterpoint"
   | "receipts"
   | "agent_debate"
-  | "report";
+  | "report"
+  | "research_loop";
 
 export type InvestigationPipelineStatus =
   | "planning_completed"
@@ -206,22 +210,53 @@ export type InvestigationPipelineStatus =
   | "timeline_completed"
   | "counter_narrative_completed"
   | "narrative_family_completed"
+  | "gap_analysis_completed"
+  | "provenance_completed"
   | "analyst_completed"
+  | "skeptic_completed"
   | "claim_counterpoint_completed"
   | "receipts_completed"
   | "agent_debate_completed"
-  | "report_completed";
+  | "report_completed"
+  | "research_loop_completed";
+
+export type LiveRivalHypothesis = {
+  id: string;
+  hypothesis: string;
+  rationale: string | null;
+};
+
+export type LiveStopCondition = {
+  id: string;
+  description: string;
+  required: boolean;
+  status: "pending" | "satisfied" | "unsatisfied";
+};
 
 export type LiveInvestigationPlan = {
   query_text: string;
   topic: string;
+  primary_question: string | null;
   canonical_phrase: string | null;
   intent: string;
   entities: string[];
+  subquestions: string[];
+  rival_hypotheses: LiveRivalHypothesis[];
+  disconfirming_evidence_criteria: string[];
+  must_have_source_classes: string[];
+  retrieval_lanes: (
+    | "discovery"
+    | "corroboration"
+    | "contradiction"
+    | "provenance"
+    | "official"
+    | "community"
+  )[];
   search_queries: string[];
   semantic_queries: string[];
   target_source_types: string[];
   requested_outputs: string[];
+  stop_conditions: LiveStopCondition[];
   time_window: {
     start: string | null;
     end: string | null;
@@ -236,10 +271,35 @@ export type LiveCoverageSummary = {
   total_documents: number;
   unique_sources: number;
   source_type_distribution: Record<string, number>;
+  lane_distribution: Record<string, number>;
   has_counter_narrative_candidates: boolean;
   has_timeline_coverage: boolean;
+  has_official_source: boolean;
   exact_phrase_hits: number;
   search_rounds_completed: number;
+};
+
+export type LiveRetrievalDocumentAnnotation = {
+  document_id: string;
+  retrieval_lane:
+    | "discovery"
+    | "corroboration"
+    | "contradiction"
+    | "provenance"
+    | "official"
+    | "community";
+  retrieval_query: string;
+  pass_number: number;
+  relevance_score: number;
+  contradiction_signal: number;
+  source_uniqueness_score: number;
+  primary_source_likelihood: number;
+  date_confidence: "low" | "medium" | "high";
+  quality_band: "tier_a" | "tier_b" | "tier_c" | "tier_d";
+  duplicate_cluster_id: string | null;
+  upstream_origin_hint: string | null;
+  provenance_hint: string | null;
+  independence_penalty: number;
 };
 
 export type LiveRetrievalResult = {
@@ -250,6 +310,7 @@ export type LiveRetrievalResult = {
   main_narrative_document_ids: string[];
   counter_narrative_candidate_ids: string[];
   context_document_ids: string[];
+  document_annotations: LiveRetrievalDocumentAnnotation[];
   warnings: string[];
   coverage_summary: LiveCoverageSummary;
   evidence_coverage_confidence: InvestigationConfidence;
@@ -341,6 +402,205 @@ export type LiveTimelineResult = {
   limitations: string[];
   confidence_score: number;
   confidence_label: InvestigationConfidence;
+  cached: boolean;
+};
+
+export type LiveGapItem = {
+  gap_id: string;
+  gap_type:
+    | "chronology"
+    | "source_diversity"
+    | "contradiction"
+    | "primary_source"
+    | "claim_support"
+    | "duplication"
+    | "evergreen_contamination"
+    | "origin_confidence"
+    | "verification"
+    | "provenance";
+  severity: "low" | "medium" | "high" | "critical";
+  summary: string;
+  related_claim_ids: string[];
+  recommended_retrieval_lane:
+    | "discovery"
+    | "corroboration"
+    | "contradiction"
+    | "provenance"
+    | "official"
+    | "community"
+    | null;
+  recommended_source_classes: string[];
+  follow_up_queries: string[];
+  resolved_in_pass: number | null;
+  status: "open" | "resolved" | "deferred";
+};
+
+export type LiveGapAnalysisResult = {
+  investigation_id: string;
+  plan_snapshot: LiveInvestigationPlan;
+  pass_number: number;
+  scores: {
+    chronology_coverage: number;
+    source_diversity_coverage: number;
+    contradiction_coverage: number;
+    primary_source_coverage: number;
+    claim_support_density: number;
+    duplication_contamination: number;
+    evergreen_contamination: number;
+    origin_confidence: number;
+  };
+  missing_evidence: LiveGapItem[];
+  weak_claim_ids: string[];
+  missing_source_classes: string[];
+  retry_priority: string[];
+  confidence_score: number;
+  cached: boolean;
+};
+
+export type LiveSkepticClaimReview = {
+  claim_id: string;
+  claim_text: string;
+  decision: "pass" | "pass_with_softening" | "retry_required" | "claim_rejected";
+  reason: string;
+  softened_text: string | null;
+  related_gap_ids: string[];
+};
+
+export type LiveSkepticReviewResult = {
+  investigation_id: string;
+  plan_snapshot: LiveInvestigationPlan;
+  pass_number: number;
+  overall_decision: "pass" | "pass_with_softening" | "retry_required" | "claim_rejected";
+  reason: string;
+  claim_reviews: LiveSkepticClaimReview[];
+  retry_instructions: string[];
+  stop_condition_status: LiveStopCondition[];
+  cached: boolean;
+};
+
+export type LiveClaimLedgerEntry = {
+  claim_id: string;
+  claim_text: string;
+  claim_type: string;
+  state:
+    | "proposed"
+    | "supported"
+    | "partially_supported"
+    | "contradicted"
+    | "unresolved"
+    | "rejected"
+    | "softened";
+  supporting_document_ids: string[];
+  counter_document_ids: string[];
+  verification_state:
+    | "verified"
+    | "mixed"
+    | "metadata_mismatch"
+    | "unavailable"
+    | "pending"
+    | "not_available";
+  survived_to_report: boolean;
+  pass_number: number;
+  notes: string[];
+};
+
+export type LiveClaimLedgerResult = {
+  investigation_id: string;
+  entries: LiveClaimLedgerEntry[];
+  cached: boolean;
+};
+
+export type LiveGapLedgerResult = {
+  investigation_id: string;
+  entries: LiveGapItem[];
+  cached: boolean;
+};
+
+export type LiveProvenanceTraceNode = {
+  document_id: string;
+  source_name: string;
+  published_at: string | null;
+  role: "earliest_anchor" | "upstream_reference" | "official_anchor" | "syndicated_copy" | "context";
+  citation_hint: string | null;
+};
+
+export type LiveProvenanceTraceResult = {
+  investigation_id: string;
+  plan_snapshot: LiveInvestigationPlan;
+  earliest_anchor_document_id: string | null;
+  earliest_anchor_summary: string;
+  trace_nodes: LiveProvenanceTraceNode[];
+  duplicate_clusters: Record<string, string[]>;
+  likely_upstream_source: string | null;
+  official_anchor_document_id: string | null;
+  provenance_limitations: string[];
+  confidence_score: number;
+  cached: boolean;
+};
+
+export type LiveConfidenceDimension = {
+  score: number;
+  reason: string;
+};
+
+export type LiveConfidenceDimensions = {
+  coverage_confidence: LiveConfidenceDimension;
+  chronology_confidence: LiveConfidenceDimension;
+  contradiction_confidence: LiveConfidenceDimension;
+  provenance_confidence: LiveConfidenceDimension;
+  verification_confidence: LiveConfidenceDimension;
+  synthesis_confidence: LiveConfidenceDimension;
+};
+
+export type LiveResearchPassSummary = {
+  pass_number: number;
+  lanes_run: (
+    | "discovery"
+    | "corroboration"
+    | "contradiction"
+    | "provenance"
+    | "official"
+    | "community"
+  )[];
+  gaps_opened: string[];
+  gaps_resolved: string[];
+  skeptic_decision: "pass" | "pass_with_softening" | "retry_required" | "claim_rejected" | null;
+  notes: string[];
+};
+
+export type LiveRetryHistoryEntry = {
+  pass_number: number;
+  lane:
+    | "discovery"
+    | "corroboration"
+    | "contradiction"
+    | "provenance"
+    | "official"
+    | "community";
+  reason: string;
+  source_classes: string[];
+  queries: string[];
+};
+
+export type LiveResearchLoopRunResult = {
+  investigation_id: string;
+  plan_snapshot: LiveInvestigationPlan;
+  pass_history: LiveResearchPassSummary[];
+  retry_history: LiveRetryHistoryEntry[];
+  active_pass: number;
+  final_decision:
+    | "completed"
+    | "completed_with_softening"
+    | "insufficient_evidence"
+    | "configuration_missing";
+  evidence_budget: {
+    documents_fetched: number;
+    source_classes_covered: number;
+    retries_used: number;
+    unresolved_gaps_remaining: number;
+  };
+  confidence_dimensions: LiveConfidenceDimensions;
+  warnings: string[];
   cached: boolean;
 };
 
@@ -606,6 +866,7 @@ export type LiveFinalReportResult = {
   recommended_human_checks: string[];
   confidence_score: number;
   confidence_label: InvestigationConfidence;
+  confidence_dimensions: LiveConfidenceDimensions | null;
   cached: boolean;
 };
 
@@ -623,6 +884,12 @@ export type LiveInvestigationWorkspace = {
   timeline: LiveTimelineResult | null;
   counter_narratives: LiveCounterNarrativeResult | null;
   narrative_family: LiveNarrativeFamilyResult | null;
+  gap_analysis: LiveGapAnalysisResult | null;
+  skeptic_review: LiveSkepticReviewResult | null;
+  claim_ledger: LiveClaimLedgerResult | null;
+  gap_ledger: LiveGapLedgerResult | null;
+  provenance_trace: LiveProvenanceTraceResult | null;
+  research_loop: LiveResearchLoopRunResult | null;
   analyst: LiveAnalystResult | null;
   claim_counterpoints: LiveClaimCounterpointResult | null;
   receipts: LiveReceiptsResult | null;

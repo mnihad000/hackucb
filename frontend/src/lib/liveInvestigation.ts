@@ -10,6 +10,7 @@ import type {
   LiveCounterNarrative,
   LiveDocument,
   LiveFinalReportClaim,
+  LiveGapItem,
   LiveSourceDiversityResult,
   LiveInvestigationWorkspace,
   LiveTimelineEvent,
@@ -29,6 +30,8 @@ export function buildInvestigationExperienceFromWorkspace(
   workspace: LiveInvestigationWorkspace,
 ): InvestigationExperience {
   const report = workspace.report;
+  const loopConfidence =
+    workspace.research_loop?.confidence_dimensions.synthesis_confidence.score;
   const title = report?.report_title ?? `${workspace.plan?.topic ?? "Live"} Investigation`;
   const summary =
     report?.report_summary ??
@@ -39,6 +42,13 @@ export function buildInvestigationExperienceFromWorkspace(
   return {
     confidence: toDisplayConfidence(
       report?.confidence_label ??
+        (loopConfidence !== undefined
+          ? loopConfidence >= 0.72
+            ? "high"
+            : loopConfidence >= 0.46
+              ? "medium"
+              : "low"
+          : undefined) ??
         workspace.analyst?.confidence_label ??
         workspace.timeline?.confidence_label ??
         "unknown",
@@ -64,6 +74,32 @@ export function getRecommendedChecks(workspace: LiveInvestigationWorkspace) {
     [];
 }
 
+export function getRivalHypotheses(workspace: LiveInvestigationWorkspace) {
+  return workspace.plan?.rival_hypotheses ?? [];
+}
+
+export function getPassHistory(workspace: LiveInvestigationWorkspace) {
+  return workspace.research_loop?.pass_history ?? [];
+}
+
+export function getRetryHistory(workspace: LiveInvestigationWorkspace) {
+  return workspace.research_loop?.retry_history ?? [];
+}
+
+export function getOpenGaps(workspace: LiveInvestigationWorkspace): LiveGapItem[] {
+  return (workspace.gap_ledger?.entries ?? workspace.gap_analysis?.missing_evidence ?? []).filter(
+    (gap) => gap.status === "open",
+  );
+}
+
+export function getResolvedGaps(workspace: LiveInvestigationWorkspace): LiveGapItem[] {
+  return (workspace.gap_ledger?.entries ?? []).filter((gap) => gap.status === "resolved");
+}
+
+export function getClaimLedgerEntries(workspace: LiveInvestigationWorkspace) {
+  return workspace.claim_ledger?.entries ?? [];
+}
+
 export function getTopClaims(workspace: LiveInvestigationWorkspace) {
   return workspace.report?.key_claims ?? [];
 }
@@ -74,6 +110,7 @@ export function getLimitations(workspace: LiveInvestigationWorkspace) {
     ...(workspace.receipts?.limitations ?? []),
     ...(workspace.narrative_family?.limitations ?? []),
     ...(workspace.agent_debate?.limitations ?? []),
+    ...(workspace.provenance_trace?.provenance_limitations ?? []),
     ...(workspace.analyst?.limitations ?? []),
     ...(workspace.timeline?.limitations ?? []),
     ...(workspace.counter_narratives?.limitations ?? []),
@@ -97,6 +134,7 @@ export function getCoverageHighlights(workspace: LiveInvestigationWorkspace) {
     `${coverage.total_documents} documents`,
     `${coverage.unique_sources} unique sources`,
     `${coverage.search_rounds_completed} search rounds`,
+    `${Object.keys(coverage.lane_distribution ?? {}).length} retrieval lanes`,
   ];
 }
 
@@ -142,8 +180,14 @@ export function getStageLabel(workspace: LiveInvestigationWorkspace) {
       return "Counter-narratives built";
     case "narrative_family":
       return "Narrative family built";
+    case "gap_analysis":
+      return "Gap analysis built";
+    case "provenance":
+      return "Provenance traced";
     case "analyst":
       return "Analyst synthesis built";
+    case "skeptic":
+      return "Skeptic review built";
     case "claim_counterpoint":
       return "Claim counterpoints built";
     case "receipts":
@@ -152,6 +196,8 @@ export function getStageLabel(workspace: LiveInvestigationWorkspace) {
       return "Agent debate built";
     case "report":
       return "Final report built";
+    case "research_loop":
+      return "Research loop completed";
     default:
       return "Investigation in progress";
   }
@@ -532,8 +578,14 @@ function formatStatus(status: LiveInvestigationWorkspace["status"]) {
       return "Counter-narratives built";
     case "narrative_family_completed":
       return "Narrative family built";
+    case "gap_analysis_completed":
+      return "Gap analysis built";
+    case "provenance_completed":
+      return "Provenance traced";
     case "analyst_completed":
       return "Analyst synthesis built";
+    case "skeptic_completed":
+      return "Skeptic review built";
     case "claim_counterpoint_completed":
       return "Claim counterpoints built";
     case "receipts_completed":
@@ -542,6 +594,8 @@ function formatStatus(status: LiveInvestigationWorkspace["status"]) {
       return "Agent debate built";
     case "report_completed":
       return "Final report built";
+    case "research_loop_completed":
+      return "Research loop completed";
     default:
       return "In progress";
   }

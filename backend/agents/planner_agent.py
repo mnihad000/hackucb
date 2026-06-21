@@ -219,9 +219,15 @@ def _build_baseline_plan(
     return InvestigationPlan(
         query_text=query_text,
         topic=topic,
+        primary_question=query_text,
         canonical_phrase=canonical_phrase,
         intent=intent,
         entities=entities,
+        subquestions=_build_subquestions(query_text, canonical_phrase, intent),
+        rival_hypotheses=_build_rival_hypotheses(canonical_phrase or topic, intent),
+        disconfirming_evidence_criteria=_build_disconfirming_criteria(intent),
+        must_have_source_classes=list(target_source_types),
+        retrieval_lanes=_derive_retrieval_lanes(intent),
         search_queries=search_queries,
         semantic_queries=semantic_queries,
         target_source_types=target_source_types,
@@ -404,6 +410,61 @@ def _build_semantic_queries(topic: str, canonical_phrase: str | None, intent: st
     else:
         queries.append(f"Find counter-narratives and source diversity around {canonical_phrase or topic}")
     return _dedupe_preserve_order(queries)
+
+
+def _build_subquestions(query_text: str, canonical_phrase: str | None, intent: str) -> list[str]:
+    subject = canonical_phrase or query_text
+    questions = [
+        f"What is the strongest evidence directly about {subject}?",
+        f"What competing or contradictory framing exists around {subject}?",
+    ]
+    if intent in {"origin", "spread"}:
+        questions.append(f"What is the earliest anchored appearance of {subject} in the retrieved corpus?")
+    if intent == "source-ecosystem":
+        questions.append(f"What source classes are amplifying or independently covering {subject}?")
+    return _dedupe_preserve_order(questions)[:5]
+
+
+def _build_rival_hypotheses(subject: str, intent: str) -> list[dict[str, str]]:
+    if intent == "origin":
+        hypotheses = [
+            {"id": "origin_local", "hypothesis": f"{subject} first emerged in niche or local commentary.", "rationale": "Origin questions often begin in niche channels before pickup."},
+            {"id": "origin_official", "hypothesis": f"{subject} traces back to an official or institutional anchor.", "rationale": "Some narratives are downstream reactions to official material."},
+        ]
+    elif intent == "counter-narrative":
+        hypotheses = [
+            {"id": "counter_direct", "hypothesis": f"A direct rebuttal to {subject} exists in the corpus.", "rationale": "Counter-frame questions require a same-claim opposition check."},
+            {"id": "counter_adjacent", "hypothesis": f"Only adjacent context exists rather than a direct rebuttal to {subject}.", "rationale": "Nearby coverage can be mistaken for a true counter-frame."},
+        ]
+    else:
+        hypotheses = [
+            {"id": "spread_independent", "hypothesis": f"{subject} spread through multiple relatively independent sources.", "rationale": "Independent pickup is materially different from repetition of one source chain."},
+            {"id": "spread_syndicated", "hypothesis": f"{subject} appears broad but mainly derives from one upstream source chain.", "rationale": "Duplicate or syndicated coverage can mimic consensus."},
+        ]
+    return hypotheses
+
+
+def _build_disconfirming_criteria(intent: str) -> list[str]:
+    criteria = [
+        "If apparent plurality is mostly duplicate or syndicated copy, downgrade confidence.",
+        "If counter-evidence was not meaningfully searched, do not treat the packet as complete.",
+    ]
+    if intent == "origin":
+        criteria.append("If earlier dated sources are missing, describe findings as earliest in retrieved corpus rather than a definitive origin.")
+    if intent == "counter-narrative":
+        criteria.append("If the counter-frame does not address the same claim, do not count it as a true counter-narrative.")
+    return criteria
+
+
+def _derive_retrieval_lanes(intent: str) -> list[str]:
+    lanes = ["discovery", "corroboration", "contradiction"]
+    if intent in {"origin", "spread"}:
+        lanes.append("provenance")
+    if intent in {"origin", "spread", "source-ecosystem"}:
+        lanes.append("official")
+    if intent in {"spread", "source-ecosystem", "general investigation"}:
+        lanes.append("community")
+    return _dedupe_preserve_order(lanes)
 
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:

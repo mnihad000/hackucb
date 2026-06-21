@@ -8,13 +8,11 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { InvestigationFlowchartData } from "../../types/rhetoriq";
 import AnimatedInvestigationEdge from "./AnimatedInvestigationEdge";
-import FlowchartControls from "./FlowchartControls";
 import InvestigationNodeCard from "./InvestigationNodeCard";
 import {
   buildRevealPlan,
   createFlowEdges,
   createFlowNodes,
-  filterFlowchartData,
   FLOW_NODE_HEIGHT,
   FLOW_NODE_WIDTH,
   getConnectedNeighborhood,
@@ -56,7 +54,6 @@ export default function InvestigationFlowchart({
     runId: 0,
     timeoutIds: new Set<number>(),
   });
-  const [animationNonce, setAnimationNonce] = useState(0);
   const [focusMode, setFocusMode] = useState(false);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [isIntroRunning, setIsIntroRunning] = useState(false);
@@ -65,17 +62,12 @@ export default function InvestigationFlowchart({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
     data.currentNodeId,
   );
-  const [showCounterNarratives, setShowCounterNarratives] = useState(true);
-  const [showReceipts, setShowReceipts] = useState(false);
   const flowRef = useRef<ReactFlowInstance<
     InvestigationFlowNode,
     InvestigationFlowEdge
   > | null>(null);
 
-  const visibleData = useMemo(
-    () => filterFlowchartData(data, showCounterNarratives),
-    [data, showCounterNarratives],
-  );
+  const visibleData = data;
   const positions = useMemo(() => getNodePositions(visibleData), [visibleData]);
   const revealPlan = useMemo(() => buildRevealPlan(visibleData), [visibleData]);
   const revealDirections = useMemo(() => {
@@ -324,7 +316,7 @@ export default function InvestigationFlowchart({
       animationController.current.runId += 1;
       clearScheduledAnimation();
     };
-  }, [animationNonce, clearScheduledAnimation, startReveal]);
+  }, [clearScheduledAnimation, startReveal]);
 
   const highlightedPath = useMemo(() => {
     if (!focusMode || !selectedNodeId) {
@@ -407,7 +399,7 @@ export default function InvestigationFlowchart({
         positions,
         revealedNodeIds: revealedNodeIdSet,
         selectedNodeId,
-        showReceipts,
+        showReceipts: false,
       }),
     [
       dimmedNodeIds,
@@ -416,7 +408,6 @@ export default function InvestigationFlowchart({
       positions,
       revealedNodeIdSet,
       selectedNodeId,
-      showReceipts,
       visibleData,
     ],
   );
@@ -456,120 +447,53 @@ export default function InvestigationFlowchart({
     [focusNode, isIntroRunning, stopIntro, visibleData.currentNodeId],
   );
 
-  const handleResetView = useCallback(() => {
-    stopIntro({ revealAll: true });
-    setFocusMode(false);
-    setHoveredNodeId(null);
-    setSelectedNodeId(visibleData.currentNodeId);
-    void flowRef.current?.fitView({
-      duration: 650,
-      maxZoom: 1.03,
-      minZoom: 0.56,
-      padding: 0.18,
-    });
-  }, [stopIntro, visibleData.currentNodeId]);
-
-  const handleReplay = useCallback(() => {
-    stopIntro();
-    setFocusMode(false);
-    setHoveredNodeId(null);
-    setSelectedNodeId(visibleData.currentNodeId);
-    setAnimationNonce((current) => current + 1);
-  }, [stopIntro, visibleData.currentNodeId]);
-
-  const handleFitView = useCallback(() => {
-    stopIntro({ revealAll: true });
-    void flowRef.current?.fitView({
-      duration: 680,
-      maxZoom: 1.03,
-      minZoom: 0.56,
-      padding: 0.18,
-    });
-  }, [stopIntro]);
-
-  const handleCounterNarrativeToggle = useCallback(() => {
-    stopIntro();
-    setShowCounterNarratives((current) => !current);
-    setFocusMode(false);
-    setHoveredNodeId(null);
-    setSelectedNodeId(data.currentNodeId);
-    setAnimationNonce((current) => current + 1);
-  }, [data.currentNodeId, stopIntro]);
-
   return (
     <section>
-      <div className="space-y-4">
-        <div className="flowchart-canvas relative overflow-hidden rounded-[1.3rem] border border-[rgba(12,12,12,0.12)] bg-[rgba(255,255,252,0.96)] shadow-[0_32px_66px_-44px_rgba(0,0,0,0.18)] backdrop-blur-xl">
-          <TerrainBackdrop />
+      <div className="flowchart-canvas relative overflow-hidden rounded-[1.3rem] border border-[rgba(12,12,12,0.12)] bg-[rgba(255,255,252,0.96)] shadow-[0_32px_66px_-44px_rgba(0,0,0,0.18)] backdrop-blur-xl">
+        <TerrainBackdrop />
 
-          <div className="relative h-[960px] sm:h-[1240px]">
-            <ReactFlow<InvestigationFlowNode, InvestigationFlowEdge>
-              aria-label="Narrative path map"
-              className="!bg-transparent"
-              defaultEdgeOptions={{ selectable: false }}
-              edges={edges}
-              edgeTypes={edgeTypes}
-              elementsSelectable={false}
-              maxZoom={1.45}
-              minZoom={0.5}
-              nodeTypes={nodeTypes}
-              nodes={nodes}
-              nodesConnectable={false}
-              nodesDraggable={false}
-              onInit={(instance) => {
-                flowRef.current = instance;
-              }}
-              onNodeClick={handleNodeClick}
-              onNodeMouseEnter={(_event, node) => setHoveredNodeId(node.id)}
-              onNodeMouseLeave={() => setHoveredNodeId(null)}
-              onMoveStart={(event) => {
-                if (event && isIntroRunning) {
-                  stopIntro({ revealAll: true });
-                }
-              }}
-              onPaneClick={() => {
-                if (isIntroRunning) {
-                  stopIntro({ revealAll: true });
-                }
+        <div className="relative h-[960px] sm:h-[1240px]">
+          <ReactFlow<InvestigationFlowNode, InvestigationFlowEdge>
+            aria-label="Narrative path map"
+            className="!bg-transparent"
+            defaultEdgeOptions={{ selectable: false }}
+            edges={edges}
+            edgeTypes={edgeTypes}
+            elementsSelectable={false}
+            maxZoom={1.45}
+            minZoom={0.5}
+            nodeTypes={nodeTypes}
+            nodes={nodes}
+            nodesConnectable={false}
+            nodesDraggable={false}
+            onInit={(instance) => {
+              flowRef.current = instance;
+            }}
+            onNodeClick={handleNodeClick}
+            onNodeMouseEnter={(_event, node) => setHoveredNodeId(node.id)}
+            onNodeMouseLeave={() => setHoveredNodeId(null)}
+            onMoveStart={(event) => {
+              if (event && isIntroRunning) {
+                stopIntro({ revealAll: true });
+              }
+            }}
+            onPaneClick={() => {
+              if (isIntroRunning) {
+                stopIntro({ revealAll: true });
+              }
 
-                setHoveredNodeId(null);
-              }}
-              onPaneScroll={() => {
-                if (isIntroRunning) {
-                  stopIntro({ revealAll: true });
-                }
-              }}
-              panOnDrag
-              panOnScroll
-              proOptions={{ hideAttribution: true }}
-              zoomOnDoubleClick={false}
-            />
-          </div>
-        </div>
-
-        <p className="rounded-[0.95rem] border border-[rgba(12,12,12,0.12)] bg-[rgba(255,255,252,0.9)] px-5 py-4 text-sm leading-7 text-[rgba(14,14,14,0.64)] shadow-[0_18px_34px_-28px_rgba(0,0,0,0.16)]">
-          This map shows first observed sources and spread patterns in the available
-          dataset. It does not prove true origin or coordination.
-        </p>
-
-        <div className="flex justify-end">
-          <div className="max-w-[22rem]">
-            <FlowchartControls
-              onFitView={handleFitView}
-              onReplay={handleReplay}
-              onResetView={handleResetView}
-              onToggleCounterNarratives={handleCounterNarrativeToggle}
-              onToggleReceipts={() => {
-                if (isIntroRunning) {
-                  stopIntro({ revealAll: true });
-                }
-
-                setShowReceipts((current) => !current);
-              }}
-              showCounterNarratives={showCounterNarratives}
-              showReceipts={showReceipts}
-            />
-          </div>
+              setHoveredNodeId(null);
+            }}
+            onPaneScroll={() => {
+              if (isIntroRunning) {
+                stopIntro({ revealAll: true });
+              }
+            }}
+            panOnDrag
+            panOnScroll
+            proOptions={{ hideAttribution: true }}
+            zoomOnDoubleClick={false}
+          />
         </div>
       </div>
     </section>

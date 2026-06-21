@@ -10,14 +10,20 @@ from models.investigation import (
     AgentDebateResult,
     AnalystResult,
     ClaimCounterpointResult,
+    ClaimLedgerResult,
     CounterNarrativeResult,
     FinalReportResult,
+    GapAnalysisResult,
+    GapLedgerResult,
     InvestigationPlan,
     RecentInvestigationSummary,
+    ProvenanceTraceResult,
+    ResearchLoopRunResult,
     InvestigationWorkspace,
     NarrativeFamilyResult,
     ReceiptsResult,
     RetrievalResult,
+    SkepticReviewResult,
     SourceDiversityResult,
     TimelineResult,
 )
@@ -105,6 +111,12 @@ class InvestigationRepository:
             timeline=self.get_timeline_result(investigation_id),
             counter_narratives=self.get_counter_narrative_result(investigation_id),
             narrative_family=self.get_narrative_family_result(investigation_id),
+            gap_analysis=self.get_gap_analysis_result(investigation_id),
+            skeptic_review=self.get_skeptic_review_result(investigation_id),
+            claim_ledger=self.get_claim_ledger_result(investigation_id),
+            gap_ledger=self.get_gap_ledger_result(investigation_id),
+            provenance_trace=self.get_provenance_trace_result(investigation_id),
+            research_loop=self.get_research_loop_run_result(investigation_id),
             analyst=self.get_analyst_result(investigation_id),
             claim_counterpoints=self.get_claim_counterpoint_result(investigation_id),
             receipts=self.get_receipts_result(investigation_id),
@@ -412,6 +424,146 @@ class InvestigationRepository:
             return None
         return NarrativeFamilyResult.model_validate_json(row["result_json"])
 
+    def save_gap_analysis_result(self, result: GapAnalysisResult) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE investigations
+                SET status = ?, current_stage = ?, updated_at = ?
+                WHERE investigation_id = ?
+                """,
+                ("gap_analysis_completed", "gap_analysis", now, result.investigation_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO gap_analysis_results (investigation_id, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(investigation_id) DO UPDATE SET
+                    result_json=excluded.result_json,
+                    updated_at=excluded.updated_at
+                """,
+                (result.investigation_id, result.model_dump_json(), now, now),
+            )
+
+    def get_gap_analysis_result(self, investigation_id: str) -> GapAnalysisResult | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT result_json FROM gap_analysis_results WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return GapAnalysisResult.model_validate_json(row["result_json"])
+
+    def save_skeptic_review_result(self, result: SkepticReviewResult) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE investigations
+                SET status = ?, current_stage = ?, updated_at = ?
+                WHERE investigation_id = ?
+                """,
+                ("skeptic_completed", "skeptic", now, result.investigation_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO skeptic_review_results (investigation_id, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(investigation_id) DO UPDATE SET
+                    result_json=excluded.result_json,
+                    updated_at=excluded.updated_at
+                """,
+                (result.investigation_id, result.model_dump_json(), now, now),
+            )
+
+    def get_skeptic_review_result(self, investigation_id: str) -> SkepticReviewResult | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT result_json FROM skeptic_review_results WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return SkepticReviewResult.model_validate_json(row["result_json"])
+
+    def save_claim_ledger_result(self, result: ClaimLedgerResult) -> None:
+        self._save_json_artifact("claim_ledger_results", result.investigation_id, result.model_dump_json())
+
+    def get_claim_ledger_result(self, investigation_id: str) -> ClaimLedgerResult | None:
+        return self._load_json_artifact("claim_ledger_results", investigation_id, ClaimLedgerResult)
+
+    def save_gap_ledger_result(self, result: GapLedgerResult) -> None:
+        self._save_json_artifact("gap_ledger_results", result.investigation_id, result.model_dump_json())
+
+    def get_gap_ledger_result(self, investigation_id: str) -> GapLedgerResult | None:
+        return self._load_json_artifact("gap_ledger_results", investigation_id, GapLedgerResult)
+
+    def save_provenance_trace_result(self, result: ProvenanceTraceResult) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE investigations
+                SET status = ?, current_stage = ?, updated_at = ?
+                WHERE investigation_id = ?
+                """,
+                ("provenance_completed", "provenance", now, result.investigation_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO provenance_trace_results (investigation_id, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(investigation_id) DO UPDATE SET
+                    result_json=excluded.result_json,
+                    updated_at=excluded.updated_at
+                """,
+                (result.investigation_id, result.model_dump_json(), now, now),
+            )
+
+    def get_provenance_trace_result(self, investigation_id: str) -> ProvenanceTraceResult | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT result_json FROM provenance_trace_results WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return ProvenanceTraceResult.model_validate_json(row["result_json"])
+
+    def save_research_loop_run_result(self, result: ResearchLoopRunResult) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE investigations
+                SET status = ?, current_stage = ?, updated_at = ?
+                WHERE investigation_id = ?
+                """,
+                ("research_loop_completed", "research_loop", now, result.investigation_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO research_loop_results (investigation_id, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(investigation_id) DO UPDATE SET
+                    result_json=excluded.result_json,
+                    updated_at=excluded.updated_at
+                """,
+                (result.investigation_id, result.model_dump_json(), now, now),
+            )
+
+    def get_research_loop_run_result(self, investigation_id: str) -> ResearchLoopRunResult | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT result_json FROM research_loop_results WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return ResearchLoopRunResult.model_validate_json(row["result_json"])
+
     def save_analyst_result(self, result: AnalystResult) -> None:
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
@@ -582,6 +734,38 @@ class InvestigationRepository:
             return None
         return FinalReportResult.model_validate_json(row["result_json"])
 
+    def _save_json_artifact(self, table_name: str, investigation_id: str, payload: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {table_name} (investigation_id, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(investigation_id) DO UPDATE SET
+                    result_json=excluded.result_json,
+                    updated_at=excluded.updated_at
+                """,
+                (investigation_id, payload, now, now),
+            )
+            conn.execute(
+                """
+                UPDATE investigations
+                SET updated_at = ?
+                WHERE investigation_id = ?
+                """,
+                (now, investigation_id),
+            )
+
+    def _load_json_artifact(self, table_name: str, investigation_id: str, model_cls):
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT result_json FROM {table_name} WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return model_cls.model_validate_json(row["result_json"])
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
@@ -700,6 +884,48 @@ class InvestigationRepository:
                 );
 
                 CREATE TABLE IF NOT EXISTS analyst_results (
+                    investigation_id TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS gap_analysis_results (
+                    investigation_id TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS skeptic_review_results (
+                    investigation_id TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS claim_ledger_results (
+                    investigation_id TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS gap_ledger_results (
+                    investigation_id TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS provenance_trace_results (
+                    investigation_id TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS research_loop_results (
                     investigation_id TEXT PRIMARY KEY,
                     result_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,

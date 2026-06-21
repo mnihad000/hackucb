@@ -28,6 +28,7 @@ from models.investigation import (
     RecentInvestigationSummary,
     ReceiptsRequest,
     ReceiptsResult,
+    RunInvestigationRequest,
     RetrieveRequest,
     RetrievalResult,
     SourceDiversityRequest,
@@ -49,6 +50,7 @@ from services.graph_builder import GraphBuilder
 from services.ingestion import get_merged_documents
 from services.investigation_cache import get_investigation_cache
 from services.investigation_repository import InvestigationRepository
+from services.research_loop_runner import InvestigationRunner
 from services.mutation_detection import MutationDetector
 from services.retrieval import Retriever
 from services.source_diversity_builder import build_source_diversity as build_source_diversity_artifact
@@ -75,6 +77,14 @@ _investigation_cache = get_investigation_cache()
 
 def _build_retriever_agent() -> RetrieverAgent:
     return RetrieverAgent(repository=_investigation_repo)
+
+
+def _build_investigation_runner() -> InvestigationRunner:
+    return InvestigationRunner(
+        repository=_investigation_repo,
+        retriever=_build_retriever_agent(),
+        verifier=_verifier,
+    )
 
 
 def _ensure_counter_narrative_result(
@@ -389,6 +399,40 @@ def retrieve(investigation_id: str, request: RetrieveRequest) -> RetrievalResult
         return result
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Retriever failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# POST /api/investigations/{id}/run - execute the supervised research loop
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/investigations/{investigation_id}/run",
+    response_model=InvestigationWorkspace,
+)
+def run_investigation(
+    investigation_id: str,
+    request: RunInvestigationRequest,
+) -> InvestigationWorkspace:
+    if not _investigation_repo.investigation_exists(investigation_id):
+        raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
+
+    plan = _investigation_repo.get_plan(investigation_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Investigation plan for '{investigation_id}' not found.")
+
+    try:
+        workspace = _build_investigation_runner().run(
+            investigation_id=investigation_id,
+            plan=plan,
+            force_refresh=request.force_refresh,
+        )
+        if _investigation_cache:
+            _investigation_cache.invalidate(investigation_id)
+        return workspace
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Research loop failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

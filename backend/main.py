@@ -1,9 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.arize_status import router as arize_status_router
+from api.band_status import router as band_status_router
+from api.browserbase_status import router as browserbase_status_router
 from api.health import router as health_router
 from api.ingest import router as ingest_router
 from api.narratives import router as narratives_router
+from api.redis_status import router as redis_status_router
 from api.trending import router as trending_router
 from api.trending import _service as trending_service
 from config import get_settings
@@ -24,14 +28,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(arize_status_router)
+app.include_router(band_status_router)
+app.include_router(browserbase_status_router)
 app.include_router(health_router)
 app.include_router(ingest_router)
 app.include_router(narratives_router)
+app.include_router(redis_status_router)
 app.include_router(trending_router)
 
 
 @app.on_event("startup")
-def warm_trending_feed() -> None:
+def startup() -> None:
+    from services.arize_tracer import init_arize_tracing
+    init_arize_tracing()
+
     if settings.DEMO_MODE:
         return
     trending_service.ensure_warm_async()
@@ -55,6 +66,9 @@ def root() -> dict:
             "POST   /api/investigate  (query_text -> planner artifact)",
             "GET    /api/investigations  (list recent persisted investigations)",
             "GET    /api/investigations/{id}  (load persisted investigation workspace)",
+            "GET    /api/investigations/{id}/memory  (load Redis agent memory context)",
+            "GET    /api/investigations/{id}/similar-claims  (semantic claim recall from Redis memory)",
+            "GET    /api/investigations/{id}/related-articles  (semantic article recall from Redis memory)",
             "POST   /api/investigations/{id}/retrieve  (run retriever agent)",
             "POST   /api/investigations/{id}/source-diversity  (build deterministic source diversity artifact)",
             "POST   /api/investigations/{id}/timeline  (build deterministic timeline artifact)",
@@ -65,6 +79,12 @@ def root() -> dict:
             "POST   /api/investigations/{id}/receipts  (build claim grounding artifact)",
             "POST   /api/investigations/{id}/agent-debate  (build readable multi-agent debate summary)",
             "POST   /api/investigations/{id}/report  (assemble final investigation report)",
+            "GET    /api/arize/status  (Arize tracing config and span coverage)",
+            "GET    /api/band/status  (Band shared-agent-room sync configuration)",
+            "GET    /api/browserbase/status  (Browserbase config and verification cache)",
+            "GET    /api/health/redis  (Redis connection and memory health)",
+            "GET    /health/embeddings  (embedding model readiness and cache status)",
+            "GET    /api/redis/status  (Redis health: cache, vector store, phrase store)",
             "GET    /api/graph/{narrative_id}",
             "GET    /api/receipts/{narrative_id}",
             "GET    /api/mutations/{narrative_id}",

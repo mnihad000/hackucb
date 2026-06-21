@@ -15,6 +15,7 @@ from models.trending import (
     TrendingInvestigationResponse,
     TrendingStatusResponse,
 )
+from services.redis_store import PhraseStore
 from services.search_provider import source_name_from_url
 from services.trending_ranker import TrendingRanker
 from services.trending_repository import TrendingRepository
@@ -38,6 +39,7 @@ class TrendingService:
             min_publishers=self._settings.TRENDING_MIN_PUBLISHERS,
             min_source_types=self._settings.TRENDING_MIN_SOURCE_TYPES,
         )
+        self._phrase_store = PhraseStore(redis_url=self._settings.REDIS_URL)
 
     def ensure_warm_async(self) -> None:
         snapshot = self._repository.get_latest_snapshot()
@@ -206,6 +208,17 @@ class TrendingService:
             }
         )
         documents = self._repository.list_discovery_documents()
+
+        # Record each document's phrases in the Redis phrase counter so spike scores
+        # are backed by real Redis sorted sets instead of in-memory dicts.
+        now_ts = datetime.now(timezone.utc)
+        for rec in documents:
+            doc = rec.document
+            ts = doc.published_at or rec.latest_seen_at or now_ts
+            for phrase in doc.phrases or []:
+                if phrase:
+                    self._phrase_store.record_phrase(phrase, ts, doc.id)
+
         topics = self._ranker.rank(documents, max_topics=self._settings.TRENDING_MAX_TOPICS)
         now = datetime.now(timezone.utc)
         snapshot = PublishedTrendingSnapshot(

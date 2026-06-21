@@ -751,8 +751,25 @@ function AgentDebateCard({
         <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
           Agent debate
         </p>
-        <span className="data-pill">{debate.confidence_label} confidence</span>
+        <div className="flex flex-wrap gap-2">
+          <span className="data-pill">{debate.confidence_label} confidence</span>
+          {debate.band_sync_status === "synced" ? (
+            <span className="data-pill">Band room synced</span>
+          ) : debate.band_sync_status === "failed" ? (
+            <span className="data-pill">Band sync failed</span>
+          ) : null}
+        </div>
       </div>
+      {debate.band_sync_status === "synced" && debate.band_message_count > 0 ? (
+        <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+          {debate.band_message_count} agent update(s) were posted to the shared Band investigation room.
+        </p>
+      ) : null}
+      {debate.band_sync_status === "failed" && debate.band_sync_error ? (
+        <p className="mt-3 text-sm leading-6 text-[rgb(130,50,50)]">
+          Band sync did not complete: {debate.band_sync_error}
+        </p>
+      ) : null}
 
       <div className="mt-4 space-y-4">
         <DebateBlock title="Analyst Agent" value={debate.analyst_position} />

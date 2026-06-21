@@ -23,6 +23,7 @@ from typing import Any
 
 from config import get_settings
 from models.document import Document
+from services.verification_cache import get_verification_cache
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ class BrowserbaseAgent:
         self._api_key = self._settings.BROWSERBASE_API_KEY
         self._project_id = self._settings.BROWSERBASE_PROJECT_ID
         self._use_real_browser = bool(self._api_key)
+        self._cache = get_verification_cache()
 
     # ------------------------------------------------------------------
     # Public API
@@ -99,12 +101,39 @@ class BrowserbaseAgent:
         """
         Verify a single document URL and return a Receipt.
 
-        Uses Browserbase if configured, otherwise falls back to httpx.
+        Checks Redis cache first so the same URL is never re-opened in a
+        browser within a 24-hour window.  Falls back to Browserbase when
+        cache misses, then httpx when Browserbase is not configured.
         """
         receipt_id = f"receipt_{doc.id}"
+
+        # Cache hit — avoid re-opening a browser session for a URL we already verified
+        cached = self._cache.get(doc.url)
+        if cached:
+            logger.debug("Verification cache hit for %s", doc.url)
+            return Receipt(
+                receipt_id=cached.get("receipt_id", receipt_id),
+                source_id=cached.get("source_id", doc.id),
+                url=cached["url"],
+                verified_status=cached["verified_status"],
+                live_title=cached.get("live_title"),
+                stored_title=cached.get("stored_title"),
+                evidence_snippet=cached.get("evidence_snippet"),
+                support_reason=cached.get("support_reason"),
+                author=cached.get("author"),
+                published_at=cached.get("published_at"),
+                checked_at=cached.get("checked_at"),
+                error=cached.get("error"),
+            )
+
         if self._use_real_browser:
-            return self._verify_with_browserbase(doc, receipt_id)
-        return self._verify_with_httpx(doc, receipt_id)
+            receipt = self._verify_with_browserbase(doc, receipt_id)
+        else:
+            receipt = self._verify_with_httpx(doc, receipt_id)
+
+        # Store result so future calls (and VerificationService) can read it
+        self._cache.set(doc.url, receipt.to_dict())
+        return receipt
 
     def verify_documents(self, docs: list[Document]) -> list[Receipt]:
         """Verify a batch of documents. Returns one Receipt per doc."""

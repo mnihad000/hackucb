@@ -508,6 +508,10 @@ class AgentDebateResult(BaseModel):
     limitations: list[str] = Field(default_factory=list)
     confidence_score: float = Field(ge=0.0, le=1.0)
     confidence_label: AgentDebateConfidenceLabel
+    band_chat_id: str | None = None
+    band_sync_status: Literal["not_configured", "synced", "failed", "skipped"] = "not_configured"
+    band_message_count: int = 0
+    band_sync_error: str | None = None
     cached: bool = False
 
 

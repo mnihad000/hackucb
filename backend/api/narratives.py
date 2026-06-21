@@ -45,11 +45,14 @@ from services.final_report_builder import (
     apply_receipts_annotations,
     build_final_report as build_final_report_artifact,
 )
+from services.band_room import get_band_room_sync
+from services.embedding_service import get_embedding_service
 from services.graph_builder import GraphBuilder
 from services.ingestion import get_merged_documents
 from services.investigation_cache import get_investigation_cache
 from services.investigation_repository import InvestigationRepository
 from services.mutation_detection import MutationDetector
+from services.redis_memory import get_redis_memory_service
 from services.retrieval import Retriever
 from services.source_diversity_builder import build_source_diversity as build_source_diversity_artifact
 from services.spike_detection import SpikeDetector
@@ -71,6 +74,294 @@ _graph_builder = GraphBuilder()
 _verifier = VerificationService()
 _investigation_repo = InvestigationRepository(get_settings().INVESTIGATION_DB_PATH)
 _investigation_cache = get_investigation_cache()
+
+
+def _update_workspace_cache(investigation_id: str) -> None:
+    """Re-load the workspace from SQLite and write it back to Redis. No-op if cache unavailable."""
+    if not _investigation_cache:
+        return
+    workspace = _investigation_repo.get_investigation_workspace(investigation_id)
+    if workspace:
+        _investigation_cache.cache_workspace(workspace)
+
+
+def _sync_agent_debate_to_band(result: AgentDebateResult) -> AgentDebateResult:
+    """Best-effort Band room sync. Never blocks or fails the local investigation."""
+    try:
+        sync = get_band_room_sync()
+        sync_result = sync.sync_debate(result)
+        if sync_result.status == "not_configured":
+            return result
+        return sync.apply_sync_result(result, sync_result)
+    except Exception as exc:
+        return result.model_copy(
+            update={
+                "band_sync_status": "failed",
+                "band_sync_error": str(exc),
+            }
+        )
+
+
+def _auto_verify_documents(documents, max_docs: int = 6) -> None:
+    """Run Browserbase verification on retrieved docs not already in Redis cache.
+
+    Populates the Redis verification cache so that the subsequent _collect_verification_map()
+    call returns real browser-verified statuses instead of demo fixtures.
+    No-op when BROWSERBASE_API_KEY is not set or documents list is empty.
+    """
+    settings = get_settings()
+    if not settings.BROWSERBASE_API_KEY or not documents:
+        return
+    try:
+        from agents.browserbase_agent import get_browserbase_agent
+        from services.verification_cache import get_verification_cache
+        vcache = get_verification_cache()
+        uncached = [doc for doc in documents[:max_docs] if not vcache.get(doc.url)]
+        if uncached:
+            get_browserbase_agent().verify_documents(uncached)
+    except Exception:
+        pass  # never block report generation on verification errors
+
+
+def _build_memory_prior_context(query_text: str) -> dict:
+    """Retrieve related prior context from Redis memory for planner/agents."""
+    try:
+        memory = get_redis_memory_service()
+        if not memory.available:
+            return {}
+        query_embedding = get_embedding_service().embed_query(query_text)
+        similar_claims = memory.search_similar_claims(query_embedding, top_k=5)
+        related_articles = memory.search_related_articles(query_embedding, top_k=5)
+        if not similar_claims and not related_articles:
+            return {}
+        return {
+            "redis_memory": {
+                "similar_claims": similar_claims,
+                "related_articles": related_articles,
+                "guidance": (
+                    "Use prior Redis memory as context only. Do not treat prior claims "
+                    "as proof without fresh receipts."
+                ),
+            }
+        }
+    except Exception:
+        return {}
+
+
+def _merge_prior_context(existing: dict | None, redis_context: dict) -> dict | None:
+    if not redis_context:
+        return existing
+    merged = dict(existing or {})
+    merged.update(redis_context)
+    return merged
+
+
+def _store_retrieved_documents_in_memory(investigation_id: str, documents) -> None:
+    try:
+        memory = get_redis_memory_service()
+        if not memory.available or not documents:
+            return
+        embedding_service = get_embedding_service()
+        for doc in documents[:40]:
+            text = f"{doc.title}. {doc.snippet or doc.text[:500]}"
+            metadata = {
+                "investigation_id": investigation_id,
+                "document_id": doc.id,
+                "source_name": doc.source_name,
+                "source_url": doc.url,
+                "published_at": doc.published_at.isoformat() if doc.published_at else None,
+                "collected_at": doc.collected_at.isoformat() if doc.collected_at else None,
+                "content_type": "article",
+                "narrative_role": (doc.metadata or {}).get("narrative_role") if doc.metadata else None,
+                "credibility_score": (doc.metadata or {}).get("credibility_score") if doc.metadata else None,
+            }
+            embedding = doc.embedding or embedding_service.embed_document(doc)
+            memory.store_article_vector(f"{investigation_id}:article:{doc.id}", text, embedding, metadata)
+            for index, claim in enumerate(doc.claims or []):
+                memory.store_claim_vector(
+                    f"{investigation_id}:doc:{doc.id}:claim:{index}",
+                    claim,
+                    embedding_service.embed_text(claim),
+                    {**metadata, "content_type": "claim"},
+                )
+    except Exception:
+        pass
+
+
+def _store_timeline_in_memory(result: TimelineResult) -> None:
+    try:
+        memory = get_redis_memory_service()
+        if not memory.available:
+            return
+        embedding_service = get_embedding_service()
+        for event in result.timeline_events:
+            text = f"{event.title}. {event.explanation}. {event.snippet or ''}"
+            memory.store_timeline_event(
+                f"{result.investigation_id}:timeline:{event.id}",
+                text,
+                embedding_service.embed_text(text),
+                {
+                    "investigation_id": result.investigation_id,
+                    "event_id": event.id,
+                    "document_id": event.document_id,
+                    "source_name": event.source_name,
+                    "source_url": event.url,
+                    "published_at": event.timestamp.isoformat(),
+                    "agent_name": "Timeline Agent",
+                    "narrative_role": event.narrative_side,
+                    "content_type": "timeline_event",
+                },
+            )
+    except Exception:
+        pass
+
+
+def _store_narrative_family_in_memory(result: NarrativeFamilyResult) -> None:
+    try:
+        memory = get_redis_memory_service()
+        if not memory.available:
+            return
+        for child in result.child_narratives:
+            memory.store_agent_finding(
+                f"{result.investigation_id}:family:{child.id}",
+                "Narrative Family Agent",
+                result.investigation_id,
+                f"{child.title}. {child.branch_summary}",
+                {
+                    "narrative_role": child.branch_type,
+                    "content_type": "agent_finding",
+                    "credibility_score": child.source_diversity_score,
+                },
+            )
+    except Exception:
+        pass
+
+
+def _store_analyst_in_memory(result: AnalystResult) -> None:
+    try:
+        memory = get_redis_memory_service()
+        if not memory.available:
+            return
+        embedding_service = get_embedding_service()
+        sections = result.draft_report_sections
+        memory.store_agent_finding(
+            f"{result.investigation_id}:analyst:summary",
+            "Analyst Agent",
+            result.investigation_id,
+            sections.executive_summary,
+            {"content_type": "agent_finding"},
+            )
+        for claim in result.candidate_claims:
+            memory.store_claim_vector(
+                f"{result.investigation_id}:analyst:{claim.id}",
+                claim.claim_text,
+                embedding_service.embed_text(claim.claim_text),
+                {
+                    "investigation_id": result.investigation_id,
+                    "agent_name": "Analyst Agent",
+                    "credibility_score": claim.confidence_score,
+                    "narrative_role": claim.claim_type,
+                    "content_type": "claim",
+                },
+            )
+    except Exception:
+        pass
+
+
+def _store_claim_counterpoints_in_memory(result: ClaimCounterpointResult) -> None:
+    try:
+        memory = get_redis_memory_service()
+        if not memory.available:
+            return
+        embedding_service = get_embedding_service()
+        for pair in result.pairs:
+            memory.store_claim_vector(
+                f"{result.investigation_id}:counterpoint:{pair.claim_id}:main",
+                pair.main_claim_text,
+                embedding_service.embed_text(pair.main_claim_text),
+                {
+                    "investigation_id": result.investigation_id,
+                    "agent_name": "Claim Counterpoint Agent",
+                    "credibility_score": pair.confidence_score,
+                    "narrative_role": "main",
+                    "content_type": "claim",
+                },
+            )
+            memory.store_claim_vector(
+                f"{result.investigation_id}:counterpoint:{pair.claim_id}:counter",
+                pair.counter_claim_text,
+                embedding_service.embed_text(pair.counter_claim_text),
+                {
+                    "investigation_id": result.investigation_id,
+                    "agent_name": "Claim Counterpoint Agent",
+                    "credibility_score": pair.confidence_score,
+                    "narrative_role": pair.counter_type,
+                    "content_type": "claim",
+                },
+            )
+    except Exception:
+        pass
+
+
+def _store_agent_debate_in_memory(result: AgentDebateResult) -> None:
+    try:
+        memory = get_redis_memory_service()
+        if not memory.available:
+            return
+        debate_items = [
+            ("Analyst Agent", "analyst_position", result.analyst_position),
+            ("Skeptic Agent", "skeptic_response", result.skeptic_response),
+            ("Receipts Agent", "receipts_check", result.receipts_check),
+            ("Counter-Narrative Agent", "counter_narrative_note", result.counter_narrative_note),
+            ("Safety Agent", "safety_grounding_decision", result.safety_grounding_decision),
+            ("Final Language Agent", "final_language_decision", result.final_language_decision),
+        ]
+        for agent_name, suffix, text in debate_items:
+            memory.store_agent_finding(
+                f"{result.investigation_id}:debate:{suffix}",
+                agent_name,
+                result.investigation_id,
+                text,
+                {
+                    "content_type": "agent_finding",
+                    "credibility_score": result.confidence_score,
+                },
+            )
+    except Exception:
+        pass
+
+
+def _store_report_in_memory(result: FinalReportResult) -> None:
+    try:
+        memory = get_redis_memory_service()
+        if not memory.available:
+            return
+        embedding_service = get_embedding_service()
+        memory.store_agent_finding(
+            f"{result.investigation_id}:report:summary",
+            "Final Report Agent",
+            result.investigation_id,
+            result.report_summary,
+            {
+                "content_type": "agent_finding",
+                "credibility_score": result.confidence_score,
+            },
+        )
+        for claim in result.key_claims:
+            memory.store_claim_vector(
+                f"{result.investigation_id}:report:{claim.claim_id}",
+                claim.claim_text,
+                embedding_service.embed_text(claim.claim_text),
+                {
+                    "investigation_id": result.investigation_id,
+                    "agent_name": "Final Report Agent",
+                    "credibility_score": claim.confidence_score,
+                    "narrative_role": claim.claim_type,
+                    "content_type": "claim",
+                },
+            )
+    except Exception:
+        pass
 
 
 def _build_retriever_agent() -> RetrieverAgent:
@@ -339,13 +630,63 @@ def get_investigation_workspace(investigation_id: str) -> InvestigationWorkspace
     return workspace
 
 
+@router.get("/investigations/{investigation_id}/memory")
+def get_investigation_memory(investigation_id: str) -> dict:
+    if not _investigation_repo.investigation_exists(investigation_id):
+        raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
+    memory = get_redis_memory_service()
+    context = memory.get_investigation_context(investigation_id)
+    return {
+        "available": memory.available,
+        **context,
+    }
+
+
+@router.get("/investigations/{investigation_id}/similar-claims")
+def get_similar_claims(
+    investigation_id: str,
+    top_k: int = Query(default=5, ge=1, le=20),
+) -> dict:
+    plan = _investigation_repo.get_plan(investigation_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Investigation plan for '{investigation_id}' not found.")
+    memory = get_redis_memory_service()
+    if not memory.available:
+        return {"available": False, "results": []}
+    query_embedding = get_embedding_service().embed_query(plan.query_text)
+    return {
+        "available": True,
+        "results": memory.search_similar_claims(query_embedding, top_k=top_k),
+    }
+
+
+@router.get("/investigations/{investigation_id}/related-articles")
+def get_related_articles(
+    investigation_id: str,
+    top_k: int = Query(default=5, ge=1, le=20),
+) -> dict:
+    plan = _investigation_repo.get_plan(investigation_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Investigation plan for '{investigation_id}' not found.")
+    memory = get_redis_memory_service()
+    if not memory.available:
+        return {"available": False, "results": []}
+    query_embedding = get_embedding_service().embed_query(plan.query_text)
+    return {
+        "available": True,
+        "results": memory.search_related_articles(query_embedding, top_k=top_k),
+    }
+
+
 # ---------------------------------------------------------------------------
 # POST /api/investigate - create an investigation plan from free-text query
 # ---------------------------------------------------------------------------
 
 @router.post("/investigate", response_model=PlannerResponse)
 def investigate(request: PlannerRequest) -> PlannerResponse:
-    plan = plan_investigation(request.query_text, request.prior_context)
+    redis_context = _build_memory_prior_context(request.query_text)
+    prior_context = _merge_prior_context(request.prior_context, redis_context)
+    plan = plan_investigation(request.query_text, prior_context)
     investigation_id = f"inv_{uuid4().hex}"
     warnings: list[str] = []
 
@@ -353,8 +694,29 @@ def investigate(request: PlannerRequest) -> PlannerResponse:
         warnings.append(
             "Planner ran in deterministic local mode. Retrieval runs as a separate investigation step."
         )
+    if redis_context:
+        counts = redis_context["redis_memory"]
+        warnings.append(
+            "Redis memory attached "
+            f"{len(counts['similar_claims'])} similar claim(s) and "
+            f"{len(counts['related_articles'])} related article(s) as prior context."
+        )
 
     _investigation_repo.save_plan(investigation_id, request.query_text, plan)
+    try:
+        get_redis_memory_service().store_agent_finding(
+            f"{investigation_id}:planner:plan",
+            "Query Planner Agent",
+            investigation_id,
+            f"{plan.topic}. {plan.canonical_phrase or plan.query_text}",
+            {
+                "content_type": "agent_finding",
+                "narrative_role": plan.intent,
+            },
+        )
+    except Exception:
+        pass
+    _update_workspace_cache(investigation_id)
     return PlannerResponse(
         investigation_id=investigation_id,
         query_text=request.query_text,
@@ -384,8 +746,11 @@ def retrieve(investigation_id: str, request: RetrieveRequest) -> RetrievalResult
             max_rounds=request.max_rounds,
             force_refresh=request.force_refresh,
         )
-        if _investigation_cache:
-            _investigation_cache.invalidate(investigation_id)
+        _store_retrieved_documents_in_memory(
+            investigation_id,
+            _investigation_repo.get_retrieved_documents(investigation_id),
+        )
+        _update_workspace_cache(investigation_id)
         return result
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Retriever failed: {exc}") from exc
@@ -458,8 +823,8 @@ def timeline(investigation_id: str, request: TimelineRequest) -> TimelineResult:
     try:
         result = build_timeline_artifact(investigation_id, plan, retrieval, documents)
         _investigation_repo.save_timeline_result(result)
-        if _investigation_cache:
-            _investigation_cache.invalidate(investigation_id)
+        _store_timeline_in_memory(result)
+        _update_workspace_cache(investigation_id)
         return result
     except HTTPException:
         raise
@@ -500,8 +865,7 @@ def counter_narratives(
     try:
         result = build_counter_narratives_artifact(investigation_id, plan, retrieval, documents)
         _investigation_repo.save_counter_narrative_result(result)
-        if _investigation_cache:
-            _investigation_cache.invalidate(investigation_id)
+        _update_workspace_cache(investigation_id)
         return result
     except HTTPException:
         raise
@@ -551,6 +915,7 @@ def narrative_family(
             counter_result,
         )
         _investigation_repo.save_narrative_family_result(result)
+        _store_narrative_family_in_memory(result)
         return result
     except HTTPException:
         raise
@@ -612,8 +977,9 @@ def analyst(
             counter_result,
         )
         _investigation_repo.save_analyst_result(result)
-        if _investigation_cache:
-            _investigation_cache.invalidate(investigation_id)
+        _store_timeline_in_memory(timeline_result)
+        _store_analyst_in_memory(result)
+        _update_workspace_cache(investigation_id)
         return result
     except HTTPException:
         raise
@@ -670,6 +1036,7 @@ def claim_counterpoints(
                 analyst_result,
             )
             _investigation_repo.save_claim_counterpoint_result(result)
+        _store_claim_counterpoints_in_memory(result)
         return result
     except HTTPException:
         raise
@@ -773,7 +1140,9 @@ def agent_debate(
             receipts_result,
             report_result,
         )
+        result = _sync_agent_debate_to_band(result)
         _investigation_repo.save_agent_debate_result(result)
+        _store_agent_debate_in_memory(result)
         return result
     except HTTPException:
         raise
@@ -818,6 +1187,10 @@ def final_report(
             source_diversity_result = build_source_diversity_artifact(investigation_id, plan, retrieval, documents)
             _investigation_repo.save_source_diversity_result(source_diversity_result)
 
+        # Auto-verify sources via Browserbase before assembling the report.
+        # Populates Redis cache so _collect_verification_map() returns real statuses.
+        _auto_verify_documents(documents)
+
         result, receipts_result, claim_counterpoint_result = _ensure_receipts_and_report(
             investigation_id,
             plan,
@@ -839,10 +1212,31 @@ def final_report(
                 receipts_result,
                 result,
             )
+            debate_result = _sync_agent_debate_to_band(debate_result)
             _investigation_repo.save_agent_debate_result(debate_result)
+            _store_agent_debate_in_memory(debate_result)
         _investigation_repo.save_final_report_result(result)
-        if _investigation_cache:
-            _investigation_cache.invalidate(investigation_id)
+        _store_retrieved_documents_in_memory(investigation_id, documents)
+        _store_analyst_in_memory(analyst_result)
+        _store_claim_counterpoints_in_memory(claim_counterpoint_result)
+        _store_narrative_family_in_memory(family_result)
+        _store_report_in_memory(result)
+        _update_workspace_cache(investigation_id)
+
+        # Grounding eval — emit an Arize span scoring how well claims are receipted
+        try:
+            from services.arize_tracer import record_grounding_eval
+            statuses = [c.verification_status for c in (result.key_claims or [])]
+            record_grounding_eval(
+                investigation_id=investigation_id,
+                verified_count=statuses.count("verified"),
+                pending_count=statuses.count("pending"),
+                unavailable_count=statuses.count("unavailable") + statuses.count("metadata_mismatch"),
+                total_claims=len(statuses),
+            )
+        except Exception:
+            pass  # never block the report response on tracing errors
+
         return result
     except HTTPException:
         raise

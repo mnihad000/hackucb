@@ -1,6 +1,7 @@
 import {
   forwardRef,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -15,15 +16,15 @@ import {
   type Variants,
 } from "framer-motion";
 import Header from "../components/layout/Header";
-import { ApiError, createInvestigation } from "../lib/api";
+import { ApiError, createInvestigation, getTrendingFeed } from "../lib/api";
 import { createInvestigationHref } from "../lib/investigationHref";
-import type { RadarTopic } from "../types/rhetoriq";
+import type { LiveTrendingTopic, RadarTopic } from "../types/rhetoriq";
 
 const EASE_OUT = [0.16, 1, 0.3, 1] as const;
 
 type Point = { x: number; y: number };
 
-const radarTopics: RadarTopic[] = [
+const FALLBACK_TOPICS: RadarTopic[] = [
   {
     id: "hidden-energy-tax",
     title: "Hidden Energy Tax",
@@ -61,6 +62,32 @@ const radarTopics: RadarTopic[] = [
     confidence: "Medium",
   },
 ];
+
+function toRadarTopic(t: LiveTrendingTopic): RadarTopic {
+  const sourceMix = Object.keys(t.source_diversity_snapshot ?? {})
+    .slice(0, 3)
+    .map((k) => k.replace(/_/g, " "))
+    .join(", ") || "Mixed";
+  const firstObserved = t.first_observed_at
+    ? new Date(t.first_observed_at).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : "—";
+  return {
+    id: t.id,
+    title: t.title,
+    summary: t.summary,
+    spike: `${(t.velocity_score ?? 1).toFixed(1)}x`,
+    sourceCount: t.source_count ?? 0,
+    firstObserved,
+    status: t.status ?? "Emerging",
+    sourceMix,
+    confidence: t.confidence_label ?? "Medium",
+  };
+}
 
 export default function LandingPage() {
   const streamRef = useRef<HTMLElement>(null);
@@ -196,10 +223,23 @@ const Stream = forwardRef<HTMLElement>(function Stream(_props, forwardedRef) {
   const anchorsRef = useRef<Point[]>([]);
   const totalLenRef = useRef(0);
 
+  const [radarTopics, setRadarTopics] = useState<RadarTopic[]>(FALLBACK_TOPICS);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [pathD, setPathD] = useState("");
   const [fractions, setFractions] = useState<number[]>([]);
-  const [lit, setLit] = useState<boolean[]>(() => radarTopics.map(() => false));
+  const [lit, setLit] = useState<boolean[]>(() => FALLBACK_TOPICS.map(() => false));
+
+  useEffect(() => {
+    getTrendingFeed(3)
+      .then((feed) => {
+        if (feed.topics.length > 0) {
+          const mapped = feed.topics.slice(0, 3).map(toRadarTopic);
+          setRadarTopics(mapped);
+          setLit(mapped.map(() => false));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Scroll progress across the curve region.
   const { scrollYProgress } = useScroll({

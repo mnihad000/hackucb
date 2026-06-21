@@ -673,12 +673,18 @@ GEMINI_API_KEY=
 REDIS_URL=
 REDIS_PASSWORD=
 
+# Embeddings
+EMBEDDING_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+EMBEDDING_LOCAL_ONLY=0
+EMBEDDING_CACHE_TTL_SECONDS=86400
+
 # Browserbase
 BROWSERBASE_API_KEY=
 BROWSERBASE_PROJECT_ID=
 
 # Band
 BAND_API_KEY=
+BAND_AGENT_ID=
 BAND_ROOM_ID=
 
 # Arize / Phoenix
@@ -695,6 +701,10 @@ SENTRY_DSN=
 # Search/data optional
 TAVILY_API_KEY=
 SERPAPI_API_KEY=
+
+# Optional integration tests
+RUN_REAL_EMBEDDING_TESTS=0
+RUN_REDIS_TESTS=0
 ```
 
 ---
@@ -826,4 +836,3 @@ Arize evaluates grounding and report quality.
 Sentry monitors reliability.
 Deepgram optionally connects online narratives to spoken media.
 ```
-

@@ -1,17 +1,15 @@
 """
-Browserbase source verification service.
+Source verification service for RhetoriQ.
 
-Demo mode: returns pre-built results from DEMO_VERIFICATIONS.
-Real mode currently returns pending verification until live Browserbase
-verification is fully wired.
+Priority order for each document URL:
+  1. Redis verification cache  — result from a prior Browserbase session
+  2. Demo fixtures             — pre-built results for seeded narratives
+  3. Pending                   — not yet verified; caller should trigger /verify
 
-Three honest status values:
-  verified          - live page matches stored metadata
-  metadata_mismatch - live title/snippet differs from stored version
-  unavailable       - page returned 404 or is paywalled / blocked
-
-Failures are features, not bugs. Showing a metadata mismatch or unavailable
-page is more credible than an all-green result.
+The service never calls Browserbase directly — that lives in
+BrowserbaseAgent and is triggered via POST /investigations/{id}/verify.
+Once Browserbase runs, it writes results to the Redis cache, and this
+service finds them automatically on the next report build.
 """
 
 from datetime import datetime, timezone
@@ -21,6 +19,16 @@ from models.document import Document
 from models.report import EvidenceItem
 
 
+# Map Browserbase verified_status values → the three statuses the frontend understands
+_STATUS_MAP: dict[str, str] = {
+    "verified": "verified",
+    "source_updated": "metadata_mismatch",
+    "blocked": "unavailable",
+    "unavailable": "unavailable",
+    "needs_manual_review": "pending",
+}
+
+
 class VerificationService:
     def __init__(self) -> None:
         self._settings = get_settings()
@@ -28,27 +36,36 @@ class VerificationService:
     def verify_source(self, doc: Document) -> dict:
         """
         Returns a verification result dict for a single document.
-        Demo mode: looks up pre-built result from DEMO_VERIFICATIONS.
-        Real mode: returns a pending verification record until live browser
-        verification is implemented.
-        """
-        from demo_data import DEMO_VERIFICATIONS
 
-        if self._settings.DEMO_MODE:
-            result = DEMO_VERIFICATIONS.get(doc.id)
-            if result:
-                return result
+        Checks Redis (populated by BrowserbaseAgent) first.
+        Falls back to demo fixtures, then returns pending.
+        """
+        from services.verification_cache import get_verification_cache
+
+        # 1. Redis cache — populated whenever BrowserbaseAgent verified this URL
+        cached = get_verification_cache().get(doc.url)
+        if cached:
+            raw_status = cached.get("verified_status", "needs_manual_review")
+            mapped = _STATUS_MAP.get(raw_status, "pending")
             return {
                 "doc_id": doc.id,
                 "url": doc.url,
-                "verification_status": "pending",
-                "live_title": None,
-                "stored_title": doc.title,
-                "snippet_match": None,
-                "page_available": None,
-                "checked_at": None,
+                "verification_status": mapped,
+                "live_title": cached.get("live_title"),
+                "stored_title": cached.get("stored_title") or doc.title,
+                "snippet_match": cached.get("evidence_snippet") is not None,
+                "page_available": mapped != "unavailable",
+                "checked_at": cached.get("checked_at"),
+                "source": "browserbase_cache",
             }
 
+        # 2. Demo fixtures (always available for seeded narrative IDs)
+        from demo_data import DEMO_VERIFICATIONS
+        demo = DEMO_VERIFICATIONS.get(doc.id)
+        if demo:
+            return demo
+
+        # 3. Pending — trigger POST /investigations/{id}/verify to populate cache
         return {
             "doc_id": doc.id,
             "url": doc.url,
@@ -57,14 +74,15 @@ class VerificationService:
             "stored_title": doc.title,
             "snippet_match": None,
             "page_available": None,
-            "checked_at": datetime.now(timezone.utc).isoformat(),
-            "note": "Live browser verification is not wired yet, so verification remains pending.",
+            "checked_at": None,
+            "source": "not_verified",
         }
 
-    def verify_evidence_items(self, evidence: list[EvidenceItem], all_docs: list[Document]) -> list[EvidenceItem]:
+    def verify_evidence_items(
+        self, evidence: list[EvidenceItem], all_docs: list[Document]
+    ) -> list[EvidenceItem]:
         """
         Runs verification for each evidence item and updates its status.
-        Returns updated evidence list with all three status states represented honestly.
         """
         doc_map = {d.id: d for d in all_docs}
         updated: list[EvidenceItem] = []

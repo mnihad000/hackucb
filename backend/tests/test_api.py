@@ -9,6 +9,7 @@ get_settings.cache_clear()
 import pytest
 from fastapi.testclient import TestClient
 from main import app
+from api import health as health_api
 from api import narratives as narratives_api
 from models.document import Document
 from models.investigation import (
@@ -116,6 +117,33 @@ def test_health():
     data = r.json()
     assert data["status"] == "ok"
     assert data["demo_mode"] is True
+
+
+def test_embedding_health_uses_intentional_load_point(monkeypatch):
+    class _FakeEmbeddingService:
+        model_name = "fake-model"
+        dimension = 4
+        cache_enabled = True
+
+        def load_model(self):
+            return object()
+
+    monkeypatch.setattr(health_api, "get_embedding_service", lambda: _FakeEmbeddingService())
+
+    r = client.get("/health/embeddings")
+    data = r.json()
+
+    assert r.status_code == 200
+    assert data["status"] == "ok"
+    assert data["model"] == "fake-model"
+    assert data["dimension"] == 4
+    assert data["cache_enabled"] is True
+
+
+def test_redis_health_endpoint():
+    r = client.get("/api/health/redis")
+    assert r.status_code == 200
+    assert "connection" in r.json()
 
 
 def test_root():
@@ -255,6 +283,7 @@ def test_retrieve_endpoint_uses_local_corpus_in_demo_mode(tmp_path, monkeypatch)
 def test_get_investigation_workspace_returns_persisted_artifacts(tmp_path, monkeypatch):
     repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))
     monkeypatch.setattr(narratives_api, "_investigation_repo", repo)
+    monkeypatch.setattr(narratives_api, "_investigation_cache", None)
 
     plan_response = client.post(
         "/api/investigate",

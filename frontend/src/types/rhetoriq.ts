@@ -551,6 +551,10 @@ export type LiveAgentDebateResult = {
   limitations: string[];
   confidence_score: number;
   confidence_label: InvestigationConfidence;
+  band_chat_id: string | null;
+  band_sync_status: "not_configured" | "synced" | "failed" | "skipped";
+  band_message_count: number;
+  band_sync_error: string | null;
   cached: boolean;
 };
 

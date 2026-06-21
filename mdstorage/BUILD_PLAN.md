@@ -7,6 +7,214 @@
 
 ---
 
+## Redis Integration — Completed June 21, 2026
+
+**Redis Cloud** (v8.4.0) is live and all four Redis layers are fully wired and tested.
+
+### What was built
+
+**1. `GET /api/redis/status` endpoint** (`backend/api/redis_status.py`)
+- Reports connection health (ping, Redis version, uptime)
+- Reports `InvestigationCache` hit/miss/write rates and cached investigation count
+- Reports `RedisVectorStore` doc count, embedding model, vset key
+- Reports `PhraseStore` backend (redis vs. in-memory) and top phrases
+- Registered in `main.py` alongside all other routers
+
+**2. `InvestigationCache` singleton** (`backend/services/investigation_cache.py`)
+- `get_investigation_cache()` now returns a process-wide singleton instead of a new instance each call
+- Stats (hits, misses, writes, hit_rate) now accumulate correctly across the lifetime of the process
+- Verified: `hit_rate=1.0` in production load — all repeated workspace GETs come from Redis, zero SQLite reads after initial write
+
+**3. Stage-level cache updates** (`backend/api/narratives.py`)
+- Added `_update_workspace_cache(investigation_id)` helper — re-loads workspace from SQLite and writes to Redis in one call
+- Replaced all `_investigation_cache.invalidate()` calls with `_update_workspace_cache()`:
+  - After `/retrieve` completes
+  - After `/timeline` completes
+  - After `/counter-narratives` completes
+  - After `/analyst` completes
+  - After `/report` (+ agent-debate) completes
+- Also calls `_update_workspace_cache()` immediately after `save_plan()` in `/investigate` so the very first `GET /investigations/{id}` is a cache hit
+
+**4. `PhraseStore` wired into trending** (`backend/services/trending_service.py`)
+- `TrendingService.__init__` now creates `self._phrase_store = PhraseStore(redis_url=settings.REDIS_URL)`
+- `_refresh()` iterates over all discovery documents after each run and calls `record_phrase()` for every extracted phrase
+- Phrase counts are now stored in Redis sorted sets (`rq:phrase_count:*`, `rq:phrase_mentions:latest`) with hourly bucketing
+- `GET /api/redis/status` shows top phrases live
+
+**5. `RedisVectorStore` (already wired in previous session)**
+- `RetrieverAgent.__init__` already calls `get_redis_vector_store()`
+- After live retrieval: `add_documents_batch()` indexes up to 20 new docs
+- During demo-mode retrieval: `semantic_search()` boosts keyword scores for matching docs
+- Currently 28 documents indexed (from prior investigation runs)
+
+### Test results (live against Redis Cloud)
+```
+GET /api/redis/status:
+  connection.connected = true
+  connection.redis_version = 8.4.0
+  investigation_cache.available = true  
+  investigation_cache.hit_rate = 1.0  (after plan+retrieve)
+  vector_store.document_count = 28
+  phrase_store.backend = redis
+
+Cache flow (full end-to-end):
+  POST /investigate           → 1 write  (plan cached on creation)
+  GET  /investigations/{id}  → HIT       (no SQLite read)
+  GET  /investigations/{id}  → HIT       (no SQLite read)
+  POST /retrieve              → 1 write  (updated workspace cached)
+  GET  /investigations/{id}  → HIT       (retrieval_completed, 12 docs)
+  Final: writes=2, hits=3, misses=0, hit_rate=1.0
+```
+
+### What remains for Redis
+- `PhraseStore.top_phrases` will only show content after a trending refresh runs in non-demo mode
+- Semantic search boost (`RedisVectorStore.semantic_search`) only fires if docs were indexed in prior investigation runs; first run always falls back to keyword scoring
+
+---
+
+## Arize Tracing Integration — Completed June 21, 2026
+
+**Arize** (AI observability) is live. Every LLM call in the investigation pipeline emits an OpenTelemetry span to Arize cloud via gRPC.
+
+### What was built
+
+**1. `config.py`** — renamed `ARIZE_SPACE_KEY` → `ARIZE_SPACE_ID` to match both the `.env` file and the `arize-otel` environment variable convention. Both `ARIZE_API_KEY` and `ARIZE_SPACE_ID` now resolve correctly at startup.
+
+**2. `services/arize_tracer.py`** (new)
+- `init_arize_tracing()` — calls `arize.otel.register()` with `space_id`, `api_key`, `project_name="RhetoriQ"`. Idempotent (safe to call multiple times). Returns `True` when active.
+- `is_ready()` — used by `TracedModelClient` to short-circuit when tracing is off
+- `tracer_span(agent_name, schema, model)` — context manager yielding an OpenInference-attributed LLM span; no-op when tracing is off
+- `record_grounding_eval(investigation_id, verified, pending, unavailable, total_claims)` — emits a `CHAIN` span after every final report build with a `rhetoriq.grounding.score` (0–1) attribute
+
+**3. `agents/model_client.py`** — `TracedModelClient` wrapper + updated factory
+- `TracedModelClient(inner, model_name)` — wraps any `BaseModelClient`, adds an OpenInference `LLM` span per `generate_json()` call
+- Span attributes: `LLM_MODEL_NAME`, `rhetoriq.agent.schema`, `INPUT_VALUE` (first 2000 chars), `OUTPUT_VALUE` (first 2000 chars), `rhetoriq.prompt_chars`, `rhetoriq.response_chars`, `rhetoriq.latency_seconds`
+- `build_model_client(prefer, trace=True)` — wraps the resolved client in `TracedModelClient` automatically when `is_ready()`
+- Falls through transparently when tracing is not active (MockModelClient, no Arize)
+
+**4. `api/narratives.py`** — grounding eval after report
+- After `save_final_report_result()`, calls `record_grounding_eval()` with claim verification counts
+- Wrapped in `try/except` so a tracing error never blocks the report response
+
+**5. `GET /api/arize/status`** (`api/arize_status.py`)
+- Reports `configured`, `api_key_set`, `space_id_set`, `tracing_active`, `project_name`, transport, endpoint
+- Calls `init_arize_tracing()` on demand (idempotent)
+- Lists which agent spans are covered
+
+**6. `main.py`** — `startup()` event calls `init_arize_tracing()` so the provider is ready before the first request.
+
+**Packages installed:** `arize-otel==0.13.0`, `openinference-instrumentation==0.1.53`, `opentelemetry-sdk==1.42.1`, `opentelemetry-exporter-otlp==1.42.1`
+
+### Test results (live)
+```
+GET /api/arize/status:
+  configured       = true
+  tracing_active   = true
+  project_name     = "RhetoriQ"
+  transport        = "grpc"
+  endpoint         = "https://otlp.arize.com/v1"
+
+TracedModelClient wraps correctly:
+  client type  = TracedModelClient
+  wraps traced = True
+
+span fired:
+  tracer ready → True
+  generate_json("planner") → result keys: [query_text, topic, ...]
+  span exported to Arize batch processor ✓
+```
+
+### What fires spans at runtime (DEMO_MODE=False)
+| Agent / stage | Schema | Span name |
+|---|---|---|
+| Planner Agent | `planner` | `planner/gemini` |
+| Claim Counterpoint Agent | `claim_counterpoints` | `claim_counterpoints/gemini` |
+| Receipts Agent | `receipts` | `receipts/gemini` |
+| Narrative Family Agent | `family` | `family/gemini` |
+| Final Report (grounding eval) | — | `grounding_eval` |
+
+In DEMO_MODE the planner uses `MockModelClient` (no LLM call), so spans fire but the inner call is deterministic. Full spans fire in production mode.
+
+### What remains for Arize
+- Auto-instrumentation for Gemini/Groq clients (requires `openinference-instrumentation-google-genai` / `openinference-instrumentation-groq`) — can add after sponsor track submission
+- Span search in Arize UI will show `project=RhetoriQ`, filterable by `rhetoriq.agent.schema`
+
+---
+
+## Browserbase Integration — Completed June 21, 2026
+
+**Browserbase** (real browser verification) is live and fully wired end-to-end with a Redis caching layer.
+
+### What was built
+
+**1. `services/verification_cache.py`** (new)
+- Redis-backed URL verification cache with 24-hour TTL
+- Key schema: `rq:verify:{md5(url)}` → JSON verification result
+- Process-wide singleton via `get_verification_cache()`
+- Falls back to no-op when Redis is unavailable — Browserbase still runs, results just aren't cached
+- `count()` and `recent()` helpers for the status endpoint
+
+**2. `agents/browserbase_agent.py`** — wired Redis cache
+- `BrowserbaseAgent.__init__` now creates `self._cache = get_verification_cache()`
+- `verify_document()` checks Redis cache first (cache hit → no browser session opened)
+- After real Browserbase or httpx verification, writes result to Redis via `self._cache.set()`
+- Cache hit is logged at DEBUG level; full receipt is reconstructed from the cached dict
+
+**3. `services/verification.py`** — rewrote to use cache
+- `verify_source()` now checks Redis first (populated by BrowserbaseAgent runs)
+- Falls back to demo fixtures, then returns `pending` if not yet verified
+- Maps Browserbase's 5 status values (`verified`, `source_updated`, `blocked`, `unavailable`, `needs_manual_review`) to the 3 frontend statuses (`verified`, `metadata_mismatch`, `unavailable`, `pending`)
+- `source` field in result tells the report which path was taken: `browserbase_cache | demo | not_verified`
+
+**4. `GET /api/browserbase/status`** (`api/browserbase_status.py`)
+- Reports API key/project ID config, Playwright availability, active backend mode
+- Shows Redis verification cache count and 5 most recent verified URLs
+- Registered in `main.py`
+
+### Data flow (end-to-end)
+
+```
+POST /investigations/{id}/verify
+  → BrowserbaseAgent.verify_documents(docs[:N])
+    → For each doc: check Redis cache
+      → Cache HIT:  reconstruct Receipt from cache, no browser session
+      → Cache MISS: open Browserbase session → navigate → extract title/snippet
+                    → build Receipt → write to Redis (24h TTL)
+  → Returns list[Receipt]
+
+GET /investigations/{id}  (report build)
+  → VerificationService.verify_batch(doc_ids, documents)
+    → For each doc: check Redis (if prior /verify run cached it)
+      → Cache HIT:  return real status (verified/metadata_mismatch/unavailable)
+      → Cache MISS: return demo fixture or pending
+```
+
+### Test results (live)
+```
+GET /api/browserbase/status:
+  configured = true
+  api_key_set = true
+  playwright_available = true
+  backend = "browserbase"   ← real browser mode active
+
+POST /investigations/{id}/verify (3 docs, demo URLs):
+  3x needs_manual_review  ← demo domains don't exist; honest result
+
+GET /api/browserbase/status after verify:
+  cached_urls = 3          ← all 3 written to Redis
+
+VerificationService.verify_source(doc with cached URL):
+  source = "browserbase_cache"   ← reading from Redis
+  status = "pending"             ← correct map for needs_manual_review
+```
+
+### Notes for real investigation runs
+- Real news URLs (GDELT/HN articles) will return `verified` or `metadata_mismatch` when Browserbase can fetch them
+- Demo seeded URLs return `needs_manual_review` because the domains don't exist — this is honest, not a bug
+- Cache survives 24 hours so repeated report builds for the same investigation never re-open a browser
+
+---
+
 ## 0. Current Status Snapshot
 
 This section reflects the repo state as of **June 19, 2026**.

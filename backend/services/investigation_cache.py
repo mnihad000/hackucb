@@ -360,19 +360,32 @@ class InvestigationCache:
             return 0
 
 
+_cache_singleton: InvestigationCache | None = None
+_cache_initialized: bool = False
+
+
 def get_investigation_cache() -> InvestigationCache | None:
     """
-    Get investigation cache instance.
+    Return the process-wide InvestigationCache singleton.
 
     Returns None if Redis is unavailable or caching is disabled.
+    Uses a module-level singleton so hit/miss/write stats accumulate
+    across the lifetime of the process (instead of resetting on each call).
     """
+    global _cache_singleton, _cache_initialized
+
+    if _cache_initialized:
+        return _cache_singleton
+
+    _cache_initialized = True
+
     from config import get_settings
 
     settings = get_settings()
 
-    # Check if caching is enabled
     if not getattr(settings, "ENABLE_INVESTIGATION_CACHE", True):
         logger.info("Investigation caching disabled in config")
+        _cache_singleton = None
         return None
 
     try:
@@ -384,8 +397,10 @@ def get_investigation_cache() -> InvestigationCache | None:
         redis_client.ping()
 
         ttl = getattr(settings, "CACHE_TTL_SECONDS", 3600)
-        return InvestigationCache(redis_client, default_ttl_seconds=ttl)
+        _cache_singleton = InvestigationCache(redis_client, default_ttl_seconds=ttl)
+        return _cache_singleton
 
     except Exception as exc:
         logger.warning(f"Investigation cache unavailable: {exc}")
+        _cache_singleton = None
         return None

@@ -673,12 +673,18 @@ GEMINI_API_KEY=
 REDIS_URL=
 REDIS_PASSWORD=
 
+# Embeddings
+EMBEDDING_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+EMBEDDING_LOCAL_ONLY=0
+EMBEDDING_CACHE_TTL_SECONDS=86400
+
 # Browserbase
 BROWSERBASE_API_KEY=
 BROWSERBASE_PROJECT_ID=
 
 # Band
 BAND_API_KEY=
+BAND_AGENT_ID=
 BAND_ROOM_ID=
 
 # Arize / Phoenix
@@ -695,6 +701,10 @@ SENTRY_DSN=
 # Search/data optional
 TAVILY_API_KEY=
 SERPAPI_API_KEY=
+
+# Optional integration tests
+RUN_REAL_EMBEDDING_TESTS=0
+RUN_REDIS_TESTS=0
 ```
 
 ---
@@ -826,4 +836,55 @@ Arize evaluates grounding and report quality.
 Sentry monitors reliability.
 Deepgram optionally connects online narratives to spoken media.
 ```
+
+
+Sponsors
+
+Sponsor
+Workshop Description
+Annapurna Labs (Co-Host)
+Coming soon!
+Fetch AI (Co-Host)
+This hands-on workshop focuses on turning ideas into real, discoverable AI agents. We’ll walk you through practical use cases and showcase project ideas that align with the hackathon challenge. From designing agentic workflows to registering agents on Agentverse and making them discoverable via ASI:One, you’ll see the full lifecycle in action. Beyond building, we’ll dive into monetisation, integrating Chat Protocol and Payment Protocol, exposing your agents to real users, and transforming capabilities into revenue-generating services.By the end of the session, you’ll have a clear blueprint for creating, deploying, and monetising AI agents that solve real-world problems and a strong foundation to build a winning hackathon project.
+Midjourney
+Coming soon!
+Interaction Co
+Technical workshop on building 3p miniapps on poke. Learn to build, deploy, and integrate your own agentic tools.
+The Token Company
+Coming soon!
+Redis
+In this hands-on workshop you'll learn how to supercharge your LLM app with three powerful Redis systems that show up in nearly every production AI app. Starting from a simple chatbot, you'll build up a full pipeline that uses vector search to ground responses in real data (RAG), semantic caching to skip redundant LLM API calls and cut latency from seconds to milliseconds, and Agent Memory to give your chatbot a persistent, searchable memory across conversation turns. By the end, you'll have a working AI assistant — "Hack Buddy" — that you can fork and remix for your own hackathon project, plus a solid mental model for when and why to reach for each Redis feature in your own AI stack.
+Anthropic
+Coming soon!
+Context
+Coming soon!
+Browserbase
+Learn how to use the Browserbase CLI.
+Orkes
+Coming soon!
+Simular
+Human vibe coding is the past - let agents vibe code for you. In this hands-on workshop, you'll learn vibe hacking — completing an entire hackathon project from scratch without writing a single line of code. Meet Sai, Simular's AI coworker that uses your computer the way you do (clicking, typing, browsing, deploying) and orchestrates Claude Code to vibe-code on your behalf. Unlike other AI coding tools, Sai then tests its own work — clicking through the app it just built, catching bugs, and iterating the build → test → fix loop until your project actually works. Bring an idea, leave with a shipped app. No CS background required.
+PaleBlueDot AI
+Coming soon!
+QNX
+Coming soon!
+Arize
+Arize AI is a way to log what an AI agent is up to, test it, and automatically improve it by taking test outputs and feeding them back to your coding agent. You can vibe code a better app faster with Arize AI.
+Overshoot AI
+Coming soon!
+Fieldguide
+Coming soon!
+Deepgram
+Build a working voice agent in 40 minutes. We'll start from a Deepgram starter app and modify it three ways so you can drop voice into your hackathon project today.
+Sentry
+Coming soon!
+Pika
+Discover how to turn Claude into a creative partner using the Pika MCP. See real examples, learn practical workflows, and get hands-on experience creating videos, ads, and other content for your own projects.
+Cognition
+Learn how the most AI-pilled engineers build software today. We'll give a demo of Devin, show how we personally use it, and walk through our favorite AI engineering tips.
+
+Band
+In this hands-on workshop, students will learn how to build multi-agent AI apps with Band: create agents that coordinate in shared rooms, exchange context, and collaborate on tasks they can extend into their hackathon projects.
+Ultimate Bots
+Train real robot policies on the Nebius Physical AI Workbench and compete for $3,000 — or just record your moves in Ultimate Bots Studio and watch a real humanoid perform them outside. Free $150 compute per team.
 

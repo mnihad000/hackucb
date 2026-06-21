@@ -17,6 +17,11 @@ from models.trending import (
     TrendingStatusResponse,
 )
 from services.investigation_repository import InvestigationRepository
+from services.demo_trending import (
+    DEMO_TRENDING_WARNING,
+    build_demo_trending_snapshot,
+    demo_trending_topics,
+)
 from services.redis_store import PhraseStore
 from services.search_provider import source_name_from_url
 from services.trending_cache import TrendingRedisCache
@@ -68,17 +73,7 @@ class TrendingService:
         last_error = self._runtime.get_last_error()
 
         if snapshot is None:
-            triggered = self._schedule_refresh_if_possible(is_reseed=True)
-            warning = "Discovery pipeline is warming up."
-            if not triggered and not self._runtime.redis_available:
-                warning = "Redis unavailable and no live snapshot is ready yet."
-            return TrendingFeedResponse(
-                state="warming" if triggered else "error",
-                warning=warning if last_error is None else f"{warning} Last error: {last_error}",
-                topics=[],
-            )
-
-        if snapshot.fresh_until >= now:
+            snapshot = self._cache_demo_snapshot(now=now)
             return TrendingFeedResponse(
                 state="ready",
                 generated_at=snapshot.generated_at,
@@ -89,7 +84,23 @@ class TrendingService:
                 topics=snapshot.topics[:limit],
             )
 
+        if snapshot.fresh_until >= now:
+            topics = self._fill_demo_topics(snapshot.topics, limit=limit, now=now)
+            return TrendingFeedResponse(
+                state="ready",
+                generated_at=snapshot.generated_at,
+                fresh_until=snapshot.fresh_until,
+                last_completed_run_at=snapshot.last_completed_run_at,
+                last_reseed_at=snapshot.last_reseed_at,
+                warning=self._snapshot_warning(
+                    snapshot,
+                    self._demo_fill_warning(snapshot.topics, limit, last_error),
+                ),
+                topics=topics,
+            )
+
         triggered = self._schedule_refresh_if_possible(is_reseed=self._needs_reseed(snapshot, now))
+        topics = self._fill_demo_topics(snapshot.topics, limit=limit, now=now) if limit >= 3 else []
         return TrendingFeedResponse(
             state="warming" if triggered else "stale",
             generated_at=snapshot.generated_at,
@@ -100,7 +111,7 @@ class TrendingService:
                 snapshot,
                 last_error or "Trending snapshot is stale and a refresh is pending.",
             ),
-            topics=snapshot.topics[:limit],
+            topics=topics,
         )
 
     def get_status(self) -> TrendingStatusResponse:
@@ -127,9 +138,9 @@ class TrendingService:
         investigation_repository,
     ) -> TrendingInvestigationResponse:
         snapshot = self._get_latest_snapshot()
-        if snapshot is None:
-            raise ValueError("No published trending snapshot is available.")
-        topic = next((candidate for candidate in snapshot.topics if candidate.id == topic_id), None)
+        available_topics = list(snapshot.topics if snapshot is not None else [])
+        available_topics.extend(demo_trending_topics())
+        topic = next((candidate for candidate in available_topics if candidate.id == topic_id), None)
         if topic is None:
             raise ValueError(f"Trending topic '{topic_id}' not found.")
 
@@ -346,6 +357,38 @@ class TrendingService:
         if snapshot.warning and last_error:
             return f"{snapshot.warning} Last error: {last_error}"
         return snapshot.warning or last_error
+
+    def _cache_demo_snapshot(self, *, now: datetime) -> PublishedTrendingSnapshot:
+        snapshot = build_demo_trending_snapshot(now=now)
+        self._runtime.set_latest_snapshot(snapshot)
+        return snapshot
+
+    def _fill_demo_topics(self, topics, *, limit: int, now: datetime) -> list:
+        selected = list(topics[:limit])
+        if len(selected) >= limit or limit < 3:
+            return selected
+
+        seen = {topic.id for topic in selected}
+        for topic in demo_trending_topics(now=now):
+            if topic.id in seen:
+                continue
+            selected.append(topic)
+            seen.add(topic.id)
+            if len(selected) >= limit:
+                break
+        return selected
+
+    def _demo_fill_warning(
+        self,
+        topics,
+        limit: int,
+        last_error: str | None,
+    ) -> str | None:
+        if limit >= 3 and len(topics) < limit:
+            if last_error:
+                return f"{DEMO_TRENDING_WARNING} Last error: {last_error}"
+            return DEMO_TRENDING_WARNING
+        return last_error
 
     def _empty_stats(self, *, query_count: int):
         return DiscoveryRunStats(query_count=query_count)

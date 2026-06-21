@@ -21,6 +21,20 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 
+_CREDIT_ERROR_MARKERS = (
+    "billing",
+    "credit",
+    "credits",
+    "exceeded your current quota",
+    "insufficient_quota",
+    "payment required",
+    "quota",
+    "rate limit",
+    "rate_limit",
+    "resource_exhausted",
+    "usage limit",
+)
+
 # ---------------------------------------------------------------------------
 # Base
 # ---------------------------------------------------------------------------
@@ -118,18 +132,27 @@ class GeminiModelClient(BaseModelClient):
                 "google-genai is not installed. Run: pip install google-genai"
             ) from exc
 
-        client = genai.Client(api_key=self._api_key)
-        response = client.models.generate_content(
-            model=self._model,
-            contents=user_prompt,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                response_mime_type="application/json",
-                temperature=0.1,
-            ),
-        )
-        from agents.json_utils import safe_json_loads
-        return safe_json_loads(response.text)
+        try:
+            client = genai.Client(api_key=self._api_key)
+            response = client.models.generate_content(
+                model=self._model,
+                contents=user_prompt,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    response_mime_type="application/json",
+                    temperature=0.1,
+                ),
+            )
+            from agents.json_utils import safe_json_loads
+            return safe_json_loads(response.text)
+        except Exception as exc:
+            _log_model_call_error(
+                provider="gemini",
+                model=self._model,
+                schema_name=schema_name,
+                exc=exc,
+            )
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -161,19 +184,28 @@ class GroqModelClient(BaseModelClient):
                 "groq is not installed. Run: pip install groq"
             ) from exc
 
-        client = Groq(api_key=self._api_key)
-        response = client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.1,
-            max_tokens=4096,
-        )
-        from agents.json_utils import safe_json_loads
-        return safe_json_loads(response.choices[0].message.content or "{}")
+        try:
+            client = Groq(api_key=self._api_key)
+            response = client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+                max_tokens=4096,
+            )
+            from agents.json_utils import safe_json_loads
+            return safe_json_loads(response.choices[0].message.content or "{}")
+        except Exception as exc:
+            _log_model_call_error(
+                provider="groq",
+                model=self._model,
+                schema_name=schema_name,
+                exc=exc,
+            )
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -332,3 +364,57 @@ def _build_chain(prefer: str) -> list[str]:
     if prefer in order:
         order = [prefer] + [x for x in order if x != prefer]
     return order
+
+
+def _log_model_call_error(
+    *,
+    provider: str,
+    model: str,
+    schema_name: str,
+    exc: Exception,
+) -> None:
+    status_code = _extract_status_code(exc)
+    if _is_credit_or_quota_error(exc):
+        logger.error(
+            "Model provider quota/credit failure: provider=%s model=%s agent_schema=%s status=%s error=%s",
+            provider,
+            model,
+            schema_name,
+            status_code or "unknown",
+            _safe_error_message(exc),
+        )
+        return
+
+    logger.warning(
+        "Model provider call failed: provider=%s model=%s agent_schema=%s status=%s error=%s",
+        provider,
+        model,
+        schema_name,
+        status_code or "unknown",
+        _safe_error_message(exc),
+    )
+
+
+def _is_credit_or_quota_error(exc: Exception) -> bool:
+    status_code = _extract_status_code(exc)
+    if status_code in {402, 429}:
+        return True
+
+    text = _safe_error_message(exc).lower()
+    return any(marker in text for marker in _CREDIT_ERROR_MARKERS)
+
+
+def _extract_status_code(exc: Exception) -> int | None:
+    for attr in ("status_code", "status"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int):
+            return value
+
+    response = getattr(exc, "response", None)
+    value = getattr(response, "status_code", None)
+    return value if isinstance(value, int) else None
+
+
+def _safe_error_message(exc: Exception) -> str:
+    message = str(exc).strip() or type(exc).__name__
+    return message.replace("\n", " ")[:500]

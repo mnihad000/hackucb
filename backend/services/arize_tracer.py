@@ -133,6 +133,67 @@ class _NoOpSpan:
         pass
 
 
+def record_claim_grounding_eval(
+    investigation_id: str,
+    claim_receipts: list,
+) -> None:
+    """
+    Emit a per-claim grounding span immediately after receipts are built.
+
+    Each entry in claim_receipts must have .claim_id, .support_status, and
+    .verification_state.  Records a breakdown of supported vs unsupported
+    claims so Arize judges can see which specific claims lacked evidence
+    before the final report drops them.
+    """
+    if not _provider_ready or _tracer is None:
+        return
+
+    try:
+        from openinference.semconv.trace import SpanAttributes, OpenInferenceSpanKindValues
+
+        supported = sum(1 for r in claim_receipts if getattr(r, "support_status", "") == "supported")
+        unsupported = sum(1 for r in claim_receipts if getattr(r, "support_status", "") == "not_supported")
+        total = len(claim_receipts)
+        score = round(supported / max(1, total), 3)
+
+        claim_detail = [
+            {
+                "claim_id": getattr(r, "claim_id", ""),
+                "support_status": getattr(r, "support_status", ""),
+                "verification_state": getattr(r, "verification_state", ""),
+            }
+            for r in claim_receipts
+        ]
+
+        with _tracer.start_as_current_span("claim_grounding_eval") as span:
+            span.set_attribute(
+                SpanAttributes.OPENINFERENCE_SPAN_KIND,
+                OpenInferenceSpanKindValues.CHAIN.value,
+            )
+            span.set_attribute("rhetoriq.investigation_id", investigation_id)
+            span.set_attribute("rhetoriq.claim_grounding.supported", supported)
+            span.set_attribute("rhetoriq.claim_grounding.unsupported", unsupported)
+            span.set_attribute("rhetoriq.claim_grounding.total", total)
+            span.set_attribute("rhetoriq.claim_grounding.score", score)
+            span.set_attribute(
+                SpanAttributes.OUTPUT_VALUE,
+                json.dumps({
+                    "investigation_id": investigation_id,
+                    "claim_grounding_score": score,
+                    "supported": supported,
+                    "unsupported": unsupported,
+                    "total": total,
+                    "claims": claim_detail,
+                }),
+            )
+            logger.info(
+                "Claim grounding eval: investigation=%s score=%.3f supported=%d/%d",
+                investigation_id, score, supported, total,
+            )
+    except Exception as exc:
+        logger.warning("Claim grounding eval span failed: %s", exc)
+
+
 def record_grounding_eval(
     investigation_id: str,
     verified_count: int,

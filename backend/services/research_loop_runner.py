@@ -320,6 +320,11 @@ class InvestigationRunner:
             self._verification_map(prior_documents, report, claim_counterpoints, source_verification),
         )
         self._repository.save_receipts_result(receipts)
+        try:
+            from services.arize_tracer import record_claim_grounding_eval
+            record_claim_grounding_eval(investigation_id, receipts.claim_receipts)
+        except Exception:
+            pass
         self._publish_band_stage(
             investigation_id,
             stage="receipts",

@@ -225,10 +225,11 @@ function buildFlowchartData(
     (left, right) =>
       new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
   );
-  const timelineNodes = timelineEvents
-    .filter((event) => event.narrative_side !== "counter")
-    .map((event, index) =>
-    toTimelineNode(event, index, docsById, workspace),
+  const mainTimelineEvents = timelineEvents.filter(
+    (event) => event.narrative_side !== "counter",
+  );
+  const timelineNodes = (mainTimelineEvents.length > 0 ? mainTimelineEvents : timelineEvents).map(
+    (event, index) => toTimelineNode(event, index, docsById, workspace),
   );
   const counterNodes = (workspace.counter_narratives?.counter_narratives ?? [])
     .slice(0, 3)
@@ -417,7 +418,7 @@ function buildCurrentSources(
     [];
 
   const byDocId = new Map<string, LiveDocument>();
-  for (const docId of topDocIds.slice(0, 6)) {
+  for (const docId of topDocIds.slice(0, 12)) {
     const document = docsById.get(docId);
     if (document) {
       byDocId.set(docId, document);
@@ -432,7 +433,7 @@ function buildCurrentSources(
   }
 
   return [
-    ...Array.from(byDocId.values()).slice(0, 6).map(toSource),
+    ...Array.from(byDocId.values()).slice(0, 12).map(toSource),
     ...buildCounterSourcesFromPair(counterpoint ?? null),
   ];
 }

@@ -3,7 +3,6 @@ import type { InvestigationNode } from "../../types/rhetoriq";
 import {
   countNodeReceipts,
   getConfidenceLabel,
-  getNodeHost,
   getNodeTypeLabel,
   hasBrowserVerifiedReceipt,
   pickNodeUrl,
@@ -29,13 +28,15 @@ export default function InvestigationNodeCard({
   node: InvestigationNode;
   kind: CardKind;
 }) {
-  const url = pickNodeUrl(node);
-  const host = getNodeHost(node);
+  const fallbackUrl = pickNodeUrl(node);
   const receiptCount = countNodeReceipts(node);
   const verified = hasBrowserVerifiedReceipt(node);
   const accent = kindAccent[kind];
   const isBranch = kind === "counter" || kind === "related" || kind === "uncertain";
   const isCurrent = kind === "current";
+  const visibleSourceCount = isCurrent ? 8 : isBranch ? 3 : 4;
+  const visibleSources = (node.sources ?? []).filter((source) => source.url).slice(0, visibleSourceCount);
+  const hiddenSourceCount = Math.max(0, (node.sources?.filter((source) => source.url).length ?? 0) - visibleSources.length);
 
   const shell = isCurrent
     ? "border-[var(--ink)] bg-white shadow-[0_30px_60px_-40px_rgba(19,35,58,0.45)] ring-1 ring-[rgba(19,35,58,0.08)]"
@@ -43,25 +44,15 @@ export default function InvestigationNodeCard({
       ? "border-[rgba(23,44,71,0.12)] bg-[rgba(255,255,255,0.78)] shadow-[0_18px_38px_-34px_rgba(19,35,58,0.3)]"
       : "border-[rgba(23,44,71,0.12)] bg-[rgba(255,255,255,0.92)] shadow-[0_24px_50px_-40px_rgba(19,35,58,0.36)]";
 
-  const Wrapper = url ? motion.a : motion.div;
-  const interactiveProps = url
-    ? {
-        href: url,
-        target: "_blank" as const,
-        rel: "noreferrer noopener" as const,
-        whileHover: { y: -3 },
-      }
-    : {};
-
   return (
-    <Wrapper
-      {...interactiveProps}
+    <motion.div
       className={`group relative block overflow-hidden rounded-[1.15rem] border ${shell} ${
-        url
+        fallbackUrl
           ? "cursor-pointer transition-shadow hover:shadow-[0_34px_64px_-38px_rgba(19,35,58,0.5)]"
           : ""
       } ${isBranch ? "px-4 py-4" : "px-5 py-5 sm:px-6 sm:py-6"}`}
       transition={{ duration: 0.35, ease: EASE_OUT }}
+      whileHover={fallbackUrl ? { y: -3 } : undefined}
     >
       {/* accent spine on the card's left edge */}
       <span
@@ -131,30 +122,88 @@ export default function InvestigationNodeCard({
         ) : null}
       </div>
 
-      {url ? (
-        <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--border)] pt-3">
+      {visibleSources.length > 0 ? (
+        <div className="mt-4 space-y-2 border-t border-[var(--border)] pt-3">
+          {visibleSources.map((source) => (
+            <a
+              key={source.id}
+              className="flex items-center justify-between gap-3 rounded-lg px-1.5 py-1 text-[0.72rem] transition hover:bg-[rgba(124,144,172,0.1)]"
+              href={source.url}
+              rel="noreferrer noopener"
+              target="_blank"
+            >
+              <span className="min-w-0">
+                <span className="block truncate font-semibold text-[var(--ink)]">
+                  {source.title}
+                </span>
+                <span className="block truncate font-medium text-[var(--muted)]">
+                  {getHostFromUrl(source.url) ?? source.name}
+                </span>
+              </span>
+              <span className="inline-flex shrink-0 items-center gap-1 font-semibold text-[var(--accent)]">
+                Open
+                <svg
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                >
+                  <path
+                    d="M5 11L11 5M11 5H6M11 5V10"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="1.6"
+                  />
+                </svg>
+              </span>
+            </a>
+          ))}
+          {hiddenSourceCount > 0 ? (
+            <p className="px-1.5 text-[0.68rem] font-medium text-[var(--muted)]">
+              +{hiddenSourceCount} more source{hiddenSourceCount === 1 ? "" : "s"} in this node
+            </p>
+          ) : null}
+        </div>
+      ) : fallbackUrl ? (
+        <a
+          className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--border)] pt-3"
+          href={fallbackUrl}
+          rel="noreferrer noopener"
+          target="_blank"
+        >
           <span className="truncate text-[0.72rem] font-medium text-[var(--muted)]">
-            {host ?? "Open source"}
+            {getHostFromUrl(fallbackUrl) ?? "Open source"}
           </span>
-          <span className="inline-flex shrink-0 items-center gap-1 text-[0.72rem] font-semibold text-[var(--accent)] transition-colors group-hover:text-[var(--ink)]">
+          <span className="inline-flex shrink-0 items-center gap-1 text-[0.72rem] font-semibold text-[var(--accent)] transition-colors hover:text-[var(--ink)]">
             Read article
             <svg
               aria-hidden="true"
-              className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+              className="h-3.5 w-3.5"
               viewBox="0 0 16 16"
               fill="none"
             >
               <path
                 d="M5 11L11 5M11 5H6M11 5V10"
                 stroke="currentColor"
-                strokeWidth="1.6"
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                strokeWidth="1.6"
               />
             </svg>
           </span>
-        </div>
+        </a>
       ) : null}
-    </Wrapper>
+    </motion.div>
   );
+}
+
+function getHostFromUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return undefined;
+  }
 }

@@ -45,8 +45,12 @@ def build_final_report(
     }
     key_claims = _select_key_claims(analyst.candidate_claims)
     report_claims = [
-        _build_report_claim(claim, docs_by_id, counterpoint_pairs.get(claim.id))
-        for claim in key_claims
+        claim
+        for claim in (
+            _build_report_claim(c, docs_by_id, counterpoint_pairs.get(c.id))
+            for c in key_claims
+        )
+        if claim.citations or claim.claim_type == "uncertainty"
     ]
     evidence_packet = _build_evidence_packet(report_claims)
     title = _report_title(plan)

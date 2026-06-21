@@ -190,9 +190,11 @@ export type InvestigationStage =
   | "source_diversity"
   | "timeline"
   | "counter_narrative"
+  | "narrative_family"
   | "analyst"
   | "claim_counterpoint"
   | "receipts"
+  | "agent_debate"
   | "report";
 
 export type InvestigationPipelineStatus =
@@ -201,9 +203,11 @@ export type InvestigationPipelineStatus =
   | "source_diversity_completed"
   | "timeline_completed"
   | "counter_narrative_completed"
+  | "narrative_family_completed"
   | "analyst_completed"
   | "claim_counterpoint_completed"
   | "receipts_completed"
+  | "agent_debate_completed"
   | "report_completed";
 
 export type LiveInvestigationPlan = {
@@ -361,6 +365,37 @@ export type LiveCounterNarrativeResult = {
   cached: boolean;
 };
 
+export type LiveNarrativeFamilyChild = {
+  id: string;
+  title: string;
+  canonical_phrase: string;
+  related_phrases: string[];
+  first_observed_doc_id: string | null;
+  relationship_to_parent: string;
+  growth_status: InvestigationStatus;
+  branch_summary: string;
+  supporting_document_ids: string[];
+  source_count: number;
+  source_type_count: number;
+  source_diversity_score: number;
+  growth_score: number;
+};
+
+export type LiveNarrativeFamilyResult = {
+  investigation_id: string;
+  plan_snapshot: LiveInvestigationPlan;
+  family_title: string;
+  parent_frame: string;
+  summary: string;
+  child_narratives: LiveNarrativeFamilyChild[];
+  fastest_growing_child: string | null;
+  broadest_source_diversity_child: string | null;
+  limitations: string[];
+  confidence_score: number;
+  confidence_label: InvestigationConfidence | "unknown";
+  cached: boolean;
+};
+
 export type LiveAnalystCandidateClaim = {
   id: string;
   claim_text: string;
@@ -476,6 +511,30 @@ export type LiveReceiptsResult = {
   cached: boolean;
 };
 
+export type LiveSoftenedClaim = {
+  claim_id: string;
+  original: string;
+  softened: string;
+  reason: string;
+};
+
+export type LiveAgentDebateResult = {
+  investigation_id: string;
+  plan_snapshot: LiveInvestigationPlan;
+  analyst_position: string;
+  skeptic_response: string;
+  receipts_check: string;
+  counter_narrative_note: string;
+  safety_grounding_decision: string;
+  final_language_decision: string;
+  rejected_claims: string[];
+  softened_claims: LiveSoftenedClaim[];
+  limitations: string[];
+  confidence_score: number;
+  confidence_label: InvestigationConfidence;
+  cached: boolean;
+};
+
 export type LiveFinalReportClaim = {
   claim_id: string;
   claim_text: string;
@@ -544,8 +603,10 @@ export type LiveInvestigationWorkspace = {
   source_diversity: LiveSourceDiversityResult | null;
   timeline: LiveTimelineResult | null;
   counter_narratives: LiveCounterNarrativeResult | null;
+  narrative_family: LiveNarrativeFamilyResult | null;
   analyst: LiveAnalystResult | null;
   claim_counterpoints: LiveClaimCounterpointResult | null;
   receipts: LiveReceiptsResult | null;
+  agent_debate: LiveAgentDebateResult | null;
   report: LiveFinalReportResult | null;
 };

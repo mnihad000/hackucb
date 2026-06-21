@@ -5,11 +5,14 @@ import Header from "../components/layout/Header";
 import { Waves } from "../components/ui/wave-background";
 import {
   ApiError,
+  runAgentDebate,
   getInvestigationWorkspace,
   runAnalyst,
   runClaimCounterpoints,
   runCounterNarratives,
+  runNarrativeFamily,
   runReport,
+  runReceipts,
   runRetrieval,
   runSourceDiversity,
   runTimeline,
@@ -114,6 +117,18 @@ export default function InvestigationPage() {
           });
         }
 
+        if (!nextWorkspace.narrative_family) {
+          setIsRunningPipeline(true);
+          await runNarrativeFamily(id);
+          nextWorkspace = await getInvestigationWorkspace(id);
+          if (cancelled) {
+            return;
+          }
+          startTransition(() => {
+            setWorkspace(nextWorkspace);
+          });
+        }
+
         if (!nextWorkspace.analyst) {
           setIsRunningPipeline(true);
           await runAnalyst(id);
@@ -129,6 +144,30 @@ export default function InvestigationPage() {
         if (!nextWorkspace.claim_counterpoints) {
           setIsRunningPipeline(true);
           await runClaimCounterpoints(id);
+          nextWorkspace = await getInvestigationWorkspace(id);
+          if (cancelled) {
+            return;
+          }
+          startTransition(() => {
+            setWorkspace(nextWorkspace);
+          });
+        }
+
+        if (!nextWorkspace.receipts) {
+          setIsRunningPipeline(true);
+          await runReceipts(id);
+          nextWorkspace = await getInvestigationWorkspace(id);
+          if (cancelled) {
+            return;
+          }
+          startTransition(() => {
+            setWorkspace(nextWorkspace);
+          });
+        }
+
+        if (!nextWorkspace.agent_debate) {
+          setIsRunningPipeline(true);
+          await runAgentDebate(id);
           nextWorkspace = await getInvestigationWorkspace(id);
           if (cancelled) {
             return;
@@ -295,9 +334,19 @@ export default function InvestigationPage() {
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(18rem,24rem)]">
               <div className="space-y-6">
                 {experience ? <InvestigationFlowchart data={experience.flowchartData} /> : null}
+                {workspace.timeline ? <TimelineCard timeline={workspace.timeline} /> : null}
+                {workspace.narrative_family ? (
+                  <NarrativeFamilyCard
+                    family={workspace.narrative_family}
+                    documents={workspace.retrieved_documents}
+                  />
+                ) : null}
                 {topClaims.length > 0 ? <ClaimsCard claims={topClaims} /> : null}
               </div>
               <div className="space-y-6">
+                {workspace.agent_debate ? (
+                  <AgentDebateCard debate={workspace.agent_debate} />
+                ) : null}
                 {coverageHighlights.length > 0 ? (
                   <InfoCard title="Coverage">
                     {coverageHighlights.map((item) => (
@@ -419,8 +468,17 @@ function ClaimsCard({
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="data-pill">{claim.claim_type}</span>
               <span className="data-pill">{formatClaimConfidence(claim)}</span>
+              {claim.support_status ? (
+                <span className="data-pill">{claim.support_status.replaceAll("_", " ")}</span>
+              ) : null}
+              {claim.verification_state ? (
+                <span className="data-pill">{claim.verification_state.replaceAll("_", " ")}</span>
+              ) : null}
             </div>
             <p className="mt-4 text-base leading-7 text-[var(--ink)]">{claim.claim_text}</p>
+            {claim.support_summary ? (
+              <p className="mt-3 text-sm leading-6 text-[var(--muted)]">{claim.support_summary}</p>
+            ) : null}
             {claim.counterpoint_summary ? (
               <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
                 Counterpoint: {claim.counterpoint_summary}
@@ -439,6 +497,213 @@ function ClaimsCard({
           </article>
         ))}
       </div>
+    </div>
+  );
+}
+
+function TimelineCard({
+  timeline,
+}: {
+  timeline: NonNullable<LiveInvestigationWorkspace["timeline"]>;
+}) {
+  return (
+    <div className="rounded-[2rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.86)] p-7 shadow-[0_38px_68px_-46px_rgba(19,35,58,0.4)] backdrop-blur-xl sm:p-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="eyebrow">Timeline</p>
+          <p className="mt-4 max-w-3xl text-base leading-7 text-[var(--muted)]">
+            {timeline.timeline_summary}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="data-pill">{timeline.confidence_label} confidence</span>
+          <span className="data-pill">{timeline.timeline_events.length} events</span>
+        </div>
+      </div>
+
+      <div className="mt-6 space-y-4">
+        {timeline.timeline_events.slice(0, 6).map((event) => (
+          <article
+            key={event.id}
+            className="rounded-[1.35rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5"
+          >
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="data-pill">{event.event_type.replaceAll("_", " ")}</span>
+              <span className="data-pill">{event.narrative_side}</span>
+            </div>
+            <h3 className="mt-4 text-lg font-semibold tracking-[-0.03em] text-[var(--ink)]">
+              {event.title}
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+              {formatTimestamp(event.timestamp)} · {event.source_name}
+            </p>
+            <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{event.explanation}</p>
+            {event.snippet ? (
+              <p className="mt-3 rounded-[1rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(245,247,250,0.9)] px-4 py-3 text-sm leading-6 text-[var(--muted)]">
+                {event.snippet}
+              </p>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NarrativeFamilyCard({
+  family,
+  documents,
+}: {
+  family: NonNullable<LiveInvestigationWorkspace["narrative_family"]>;
+  documents: LiveInvestigationWorkspace["retrieved_documents"];
+}) {
+  const documentMap = new Map(documents.map((document) => [document.id, document]));
+  const fastest = family.fastest_growing_child;
+  const broadest = family.broadest_source_diversity_child;
+
+  return (
+    <div className="rounded-[2rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.86)] p-7 shadow-[0_38px_68px_-46px_rgba(19,35,58,0.4)] backdrop-blur-xl sm:p-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="eyebrow">Narrative family</p>
+          <h2 className="mt-4 text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+            {family.family_title}
+          </h2>
+          <p className="mt-3 text-base leading-7 text-[var(--muted)]">
+            {family.summary}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="data-pill">{family.confidence_label} confidence</span>
+          <span className="data-pill">{family.child_narratives.length} branches</span>
+        </div>
+      </div>
+
+      <div className="mt-6 rounded-[1.4rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5">
+        <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+          Parent frame
+        </p>
+        <p className="mt-3 text-lg font-semibold text-[var(--ink)]">{family.parent_frame}</p>
+      </div>
+
+      <div className="mt-5 space-y-4">
+        {family.child_narratives.map((child) => {
+          const firstObservedDoc = child.first_observed_doc_id
+            ? documentMap.get(child.first_observed_doc_id)
+            : null;
+          return (
+            <article
+              key={child.id}
+              className="rounded-[1.35rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5"
+            >
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="data-pill">{child.growth_status}</span>
+                {child.id === fastest ? <span className="data-pill">fastest growing</span> : null}
+                {child.id === broadest ? <span className="data-pill">broadest sources</span> : null}
+              </div>
+              <h3 className="mt-4 text-lg font-semibold tracking-[-0.03em] text-[var(--ink)]">
+                {child.title}
+              </h3>
+              <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                {child.relationship_to_parent}
+              </p>
+              <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{child.branch_summary}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <span className="data-pill">{child.source_count} sources</span>
+                <span className="data-pill">{child.source_type_count} source types</span>
+                {firstObservedDoc ? (
+                  <span className="data-pill">
+                    first observed: {firstObservedDoc.source_name}
+                  </span>
+                ) : null}
+              </div>
+              {child.related_phrases.length > 0 ? (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {child.related_phrases.map((phrase) => (
+                    <span
+                      key={`${child.id}-${phrase}`}
+                      className="rounded-full border border-[rgba(19,35,58,0.08)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]"
+                    >
+                      {phrase}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AgentDebateCard({
+  debate,
+}: {
+  debate: NonNullable<LiveInvestigationWorkspace["agent_debate"]>;
+}) {
+  return (
+    <div className="rounded-[1.7rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.88)] p-5 shadow-[0_24px_44px_-34px_rgba(19,35,58,0.34)]">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+          Agent debate
+        </p>
+        <span className="data-pill">{debate.confidence_label} confidence</span>
+      </div>
+
+      <div className="mt-4 space-y-4">
+        <DebateBlock title="Analyst Agent" value={debate.analyst_position} />
+        <DebateBlock title="Skeptic Summary" value={debate.skeptic_response} />
+        <DebateBlock title="Receipts Check" value={debate.receipts_check} />
+        <DebateBlock title="Counter-Narrative Note" value={debate.counter_narrative_note} />
+        <DebateBlock title="Safety / Grounding" value={debate.safety_grounding_decision} />
+        <DebateBlock title="Final Language Decision" value={debate.final_language_decision} />
+
+        {debate.rejected_claims.length > 0 ? (
+          <div className="rounded-[1.1rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-4">
+            <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+              Rejected claims
+            </p>
+            <div className="mt-3 space-y-2">
+              {debate.rejected_claims.map((item) => (
+                <p key={item} className="text-sm leading-6 text-[var(--ink)]">
+                  {item}
+                </p>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {debate.softened_claims.length > 0 ? (
+          <div className="rounded-[1.1rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-4">
+            <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+              Softened claims
+            </p>
+            <div className="mt-3 space-y-3">
+              {debate.softened_claims.map((item) => (
+                <div key={item.claim_id} className="rounded-[0.95rem] bg-[rgba(245,247,250,0.9)] p-3">
+                  <p className="text-sm font-semibold text-[var(--ink)]">{item.original}</p>
+                  <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{item.softened}</p>
+                  <p className="mt-2 text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                    {item.reason}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function DebateBlock({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-[1.1rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-4">
+      <p className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+        {title}
+      </p>
+      <p className="mt-3 text-sm leading-7 text-[var(--ink)]">{value}</p>
     </div>
   );
 }
@@ -507,4 +772,11 @@ function formatDistributionLine(label: string, distribution: Record<string, numb
     .map(([key, count]) => `${key.replaceAll("_", " ")}: ${count}`)
     .join(", ");
   return `${label}: ${summary}`;
+}
+
+function formatTimestamp(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }

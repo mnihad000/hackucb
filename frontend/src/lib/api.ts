@@ -107,6 +107,13 @@ export async function runCounterNarratives(investigationId: string) {
   });
 }
 
+export async function runNarrativeFamily(investigationId: string) {
+  return request(`/api/investigations/${investigationId}/family`, {
+    body: {},
+    method: "POST",
+  });
+}
+
 export async function runAnalyst(investigationId: string) {
   return request(`/api/investigations/${investigationId}/analyst`, {
     body: {},
@@ -123,6 +130,13 @@ export async function runClaimCounterpoints(investigationId: string) {
 
 export async function runReceipts(investigationId: string) {
   return request(`/api/investigations/${investigationId}/receipts`, {
+    body: {},
+    method: "POST",
+  });
+}
+
+export async function runAgentDebate(investigationId: string) {
+  return request(`/api/investigations/${investigationId}/agent-debate`, {
     body: {},
     method: "POST",
   });

@@ -76,6 +76,8 @@ export function getLimitations(workspace: LiveInvestigationWorkspace) {
   const values = [
     ...(workspace.report?.limitations ?? []),
     ...(workspace.receipts?.limitations ?? []),
+    ...(workspace.narrative_family?.limitations ?? []),
+    ...(workspace.agent_debate?.limitations ?? []),
     ...(workspace.analyst?.limitations ?? []),
     ...(workspace.timeline?.limitations ?? []),
     ...(workspace.counter_narratives?.limitations ?? []),
@@ -142,12 +144,16 @@ export function getStageLabel(workspace: LiveInvestigationWorkspace) {
       return "Timeline built";
     case "counter_narrative":
       return "Counter-narratives built";
+    case "narrative_family":
+      return "Narrative family built";
     case "analyst":
       return "Analyst synthesis built";
     case "claim_counterpoint":
       return "Claim counterpoints built";
     case "receipts":
       return "Receipts built";
+    case "agent_debate":
+      return "Agent debate built";
     case "report":
       return "Final report built";
     default:
@@ -528,12 +534,16 @@ function formatStatus(status: LiveInvestigationWorkspace["status"]) {
       return "Timeline built";
     case "counter_narrative_completed":
       return "Counter-narratives built";
+    case "narrative_family_completed":
+      return "Narrative family built";
     case "analyst_completed":
       return "Analyst synthesis built";
     case "claim_counterpoint_completed":
       return "Claim counterpoints built";
     case "receipts_completed":
       return "Receipts built";
+    case "agent_debate_completed":
+      return "Agent debate built";
     case "report_completed":
       return "Final report built";
     default:

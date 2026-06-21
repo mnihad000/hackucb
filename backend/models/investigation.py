@@ -26,9 +26,11 @@ InvestigationStatus = Literal[
     "source_diversity_completed",
     "timeline_completed",
     "counter_narrative_completed",
+    "narrative_family_completed",
     "analyst_completed",
     "claim_counterpoint_completed",
     "receipts_completed",
+    "agent_debate_completed",
     "report_completed",
 ]
 InvestigationStage = Literal[
@@ -37,9 +39,11 @@ InvestigationStage = Literal[
     "source_diversity",
     "timeline",
     "counter_narrative",
+    "narrative_family",
     "analyst",
     "claim_counterpoint",
     "receipts",
+    "agent_debate",
     "report",
 ]
 CoverageConfidence = Literal["low", "medium", "high"]
@@ -56,6 +60,8 @@ NarrativeSide = Literal["main", "counter", "related", "unknown"]
 TimelineConfidenceLabel = Literal["low", "medium", "high"]
 CounterNarrativeRelationship = Literal["opposing", "reframing", "corrective"]
 CounterNarrativeConfidenceLabel = Literal["low", "medium", "high"]
+NarrativeGrowthStatus = Literal["emerging", "amplifying", "mainstreaming", "declining", "unknown"]
+NarrativeFamilyConfidenceLabel = Literal["low", "medium", "high", "unknown"]
 ClaimType = Literal["observed_fact", "inference", "uncertainty", "limitation", "recommendation"]
 AnalystConfidenceLabel = Literal["low", "medium", "high"]
 ClaimCounterpointType = Literal["opposing", "corrective", "reframing"]
@@ -77,6 +83,7 @@ ClaimVerificationState = Literal[
     "not_available",
 ]
 ReceiptsConfidenceLabel = Literal["low", "medium", "high"]
+AgentDebateConfidenceLabel = Literal["low", "medium", "high"]
 ReportConfidenceLabel = Literal["low", "medium", "high"]
 SourceDiversityConfidenceLabel = Literal["low", "medium", "high"]
 
@@ -289,6 +296,43 @@ class CounterNarrativeRequest(BaseModel):
     force_refresh: bool = False
 
 
+class NarrativeFamilyChild(BaseModel):
+    id: str
+    title: str
+    canonical_phrase: str
+    related_phrases: list[str] = Field(default_factory=list)
+    first_observed_doc_id: str | None = None
+    relationship_to_parent: str
+    growth_status: NarrativeGrowthStatus = "unknown"
+    branch_summary: str
+    supporting_document_ids: list[str] = Field(default_factory=list)
+    source_count: int = 0
+    source_type_count: int = 0
+    source_diversity_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    growth_score: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class NarrativeFamilyResult(BaseModel):
+    investigation_id: str
+    plan_snapshot: InvestigationPlan
+    family_title: str
+    parent_frame: str
+    summary: str
+    child_narratives: list[NarrativeFamilyChild] = Field(default_factory=list)
+    fastest_growing_child: str | None = None
+    broadest_source_diversity_child: str | None = None
+    limitations: list[str] = Field(default_factory=list)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    confidence_label: NarrativeFamilyConfidenceLabel
+    cached: bool = False
+
+
+class NarrativeFamilyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force_refresh: bool = False
+
+
 class DraftReportSections(BaseModel):
     executive_summary: str
     observed_facts: str
@@ -413,6 +457,36 @@ class ReceiptsRequest(BaseModel):
     force_refresh: bool = False
 
 
+class SoftenedClaim(BaseModel):
+    claim_id: str
+    original: str
+    softened: str
+    reason: str
+
+
+class AgentDebateResult(BaseModel):
+    investigation_id: str
+    plan_snapshot: InvestigationPlan
+    analyst_position: str
+    skeptic_response: str
+    receipts_check: str
+    counter_narrative_note: str
+    safety_grounding_decision: str
+    final_language_decision: str
+    rejected_claims: list[str] = Field(default_factory=list)
+    softened_claims: list[SoftenedClaim] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    confidence_label: AgentDebateConfidenceLabel
+    cached: bool = False
+
+
+class AgentDebateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force_refresh: bool = False
+
+
 class FinalReportClaim(BaseModel):
     claim_id: str
     claim_text: str
@@ -476,7 +550,9 @@ class InvestigationWorkspace(BaseModel):
     source_diversity: SourceDiversityResult | None = None
     timeline: TimelineResult | None = None
     counter_narratives: CounterNarrativeResult | None = None
+    narrative_family: NarrativeFamilyResult | None = None
     analyst: AnalystResult | None = None
     claim_counterpoints: ClaimCounterpointResult | None = None
     receipts: ReceiptsResult | None = None
+    agent_debate: AgentDebateResult | None = None
     report: FinalReportResult | None = None

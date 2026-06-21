@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from uuid import uuid4
 
+from agents.receipts_agent import build_receipts as build_receipts_agent
 from agents.claim_counterpoint_agent import build_claim_counterpoints
 from agents.planner_agent import plan_investigation
 from agents.retriever_agent import RetrieverAgent
@@ -8,6 +9,8 @@ from config import get_settings
 from demo_data import ALL_DOCUMENTS, DEMO_GRAPHS, DEMO_NARRATIVES
 from models.graph import NarrativeGraph
 from models.investigation import (
+    AgentDebateRequest,
+    AgentDebateResult,
     AnalystRequest,
     AnalystResult,
     ClaimCounterpointRequest,
@@ -17,6 +20,8 @@ from models.investigation import (
     FinalReportRequest,
     FinalReportResult,
     InvestigationWorkspace,
+    NarrativeFamilyRequest,
+    NarrativeFamilyResult,
     PlannerRequest,
     PlannerResponse,
     ReceiptsRequest,
@@ -29,6 +34,7 @@ from models.investigation import (
     TimelineResult,
 )
 from services.analyst_builder import build_analyst_result as build_analyst_result_artifact
+from services.agent_debate_builder import build_agent_debate as build_agent_debate_artifact
 from models.narrative import NarrativeCluster
 from services.counter_narrative_builder import (
     build_counter_narratives as build_counter_narratives_artifact,
@@ -42,7 +48,9 @@ from services.ingestion import get_merged_documents
 from services.investigation_cache import get_investigation_cache
 from services.investigation_repository import InvestigationRepository
 from services.mutation_detection import MutationDetector
-from services.receipts_builder import build_receipts as build_receipts_artifact
+from services.narrative_family_builder import (
+    build_narrative_family as build_narrative_family_artifact,
+)
 from services.retrieval import Retriever
 from services.source_diversity_builder import build_source_diversity as build_source_diversity_artifact
 from services.spike_detection import SpikeDetector
@@ -120,6 +128,30 @@ def _ensure_analyst_result(
     return analyst_result
 
 
+def _ensure_narrative_family_result(
+    investigation_id: str,
+    plan,
+    retrieval,
+    documents,
+) -> NarrativeFamilyResult:
+    narrative_family_result = _investigation_repo.get_narrative_family_result(investigation_id)
+    if narrative_family_result is not None:
+        return narrative_family_result
+
+    timeline_result = _ensure_timeline_result(investigation_id, plan, retrieval, documents)
+    counter_result = _ensure_counter_narrative_result(investigation_id, plan, retrieval, documents)
+    narrative_family_result = build_narrative_family_artifact(
+        investigation_id,
+        plan,
+        retrieval,
+        documents,
+        timeline_result,
+        counter_result,
+    )
+    _investigation_repo.save_narrative_family_result(narrative_family_result)
+    return narrative_family_result
+
+
 def _ensure_claim_counterpoint_result(
     investigation_id: str,
     plan,
@@ -191,6 +223,49 @@ def _collect_verification_map(documents, report, claim_counterpoint_result) -> d
     for doc_id in unique_doc_ids:
         verification_map.setdefault(doc_id, "pending")
     return verification_map
+
+
+def _ensure_receipts_and_report(
+    investigation_id: str,
+    plan,
+    retrieval,
+    documents,
+    *,
+    force_refresh: bool = False,
+) -> tuple[FinalReportResult, ReceiptsResult, ClaimCounterpointResult]:
+    claim_counterpoint_result = _ensure_claim_counterpoint_result(
+        investigation_id,
+        plan,
+        retrieval,
+        documents,
+    )
+
+    cached_report = None if force_refresh else _investigation_repo.get_final_report_result(investigation_id)
+    cached_receipts = None if force_refresh else _investigation_repo.get_receipts_result(investigation_id)
+
+    base_report = cached_report or _build_base_report_result(
+        investigation_id,
+        plan,
+        retrieval,
+        documents,
+    )
+
+    receipts_result = cached_receipts
+    if force_refresh or receipts_result is None:
+        verification_map = _collect_verification_map(documents, base_report, claim_counterpoint_result)
+        receipts_result = build_receipts_agent(
+            investigation_id,
+            plan,
+            documents,
+            base_report,
+            claim_counterpoint_result,
+            verification_map,
+        )
+        _investigation_repo.save_receipts_result(receipts_result)
+
+    annotated_report = apply_receipts_annotations(base_report, receipts_result)
+    _investigation_repo.save_final_report_result(annotated_report, update_stage=False)
+    return annotated_report, receipts_result, claim_counterpoint_result
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +498,55 @@ def counter_narratives(
 
 
 # ---------------------------------------------------------------------------
+# POST /api/investigations/{id}/family - build narrative family artifact
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/investigations/{investigation_id}/family",
+    response_model=NarrativeFamilyResult,
+)
+def narrative_family(
+    investigation_id: str,
+    request: NarrativeFamilyRequest,
+) -> NarrativeFamilyResult:
+    if not _investigation_repo.investigation_exists(investigation_id):
+        raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
+
+    plan = _investigation_repo.get_plan(investigation_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Investigation plan for '{investigation_id}' not found.")
+
+    retrieval = _investigation_repo.get_retrieval_result(investigation_id)
+    if retrieval is None:
+        raise HTTPException(status_code=404, detail=f"Retrieval result for '{investigation_id}' not found.")
+
+    documents = _investigation_repo.get_retrieved_documents(investigation_id)
+
+    if not request.force_refresh:
+        cached = _investigation_repo.get_narrative_family_result(investigation_id)
+        if cached is not None:
+            return cached.model_copy(update={"cached": True})
+
+    try:
+        timeline_result = _ensure_timeline_result(investigation_id, plan, retrieval, documents)
+        counter_result = _ensure_counter_narrative_result(investigation_id, plan, retrieval, documents)
+        result = build_narrative_family_artifact(
+            investigation_id,
+            plan,
+            retrieval,
+            documents,
+            timeline_result,
+            counter_result,
+        )
+        _investigation_repo.save_narrative_family_result(result)
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Narrative family build failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
 # POST /api/investigations/{id}/analyst - build synthesis artifact
 # ---------------------------------------------------------------------------
 
@@ -571,39 +695,76 @@ def receipts(
         if cached is not None:
             return cached.model_copy(update={"cached": True})
 
-    claim_counterpoint_result = _ensure_claim_counterpoint_result(
-        investigation_id,
-        plan,
-        retrieval,
-        documents,
-    )
-
     try:
-        base_report = _build_base_report_result(
+        _report, result, _claim_counterpoint_result = _ensure_receipts_and_report(
             investigation_id,
             plan,
             retrieval,
             documents,
+            force_refresh=request.force_refresh,
         )
-        # Persist the base report first so receipts can be attached to workspace state.
-        _investigation_repo.save_final_report_result(base_report)
-        verification_map = _collect_verification_map(documents, base_report, claim_counterpoint_result)
-        result = build_receipts_artifact(
-            investigation_id,
-            plan,
-            documents,
-            base_report,
-            claim_counterpoint_result,
-            verification_map,
-        )
-        _investigation_repo.save_receipts_result(result)
-        annotated_report = apply_receipts_annotations(base_report, result)
-        _investigation_repo.save_final_report_result(annotated_report, update_stage=False)
         return result
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Receipts build failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# POST /api/investigations/{id}/agent-debate - summarize analyst/skeptic/receipts tension
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/investigations/{investigation_id}/agent-debate",
+    response_model=AgentDebateResult,
+)
+def agent_debate(
+    investigation_id: str,
+    request: AgentDebateRequest,
+) -> AgentDebateResult:
+    if not _investigation_repo.investigation_exists(investigation_id):
+        raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
+
+    plan = _investigation_repo.get_plan(investigation_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Investigation plan for '{investigation_id}' not found.")
+
+    retrieval = _investigation_repo.get_retrieval_result(investigation_id)
+    if retrieval is None:
+        raise HTTPException(status_code=404, detail=f"Retrieval result for '{investigation_id}' not found.")
+
+    documents = _investigation_repo.get_retrieved_documents(investigation_id)
+
+    if not request.force_refresh:
+        cached = _investigation_repo.get_agent_debate_result(investigation_id)
+        if cached is not None:
+            return cached.model_copy(update={"cached": True})
+
+    try:
+        counter_result = _ensure_counter_narrative_result(investigation_id, plan, retrieval, documents)
+        analyst_result = _ensure_analyst_result(investigation_id, plan, retrieval, documents)
+        report_result, receipts_result, claim_counterpoint_result = _ensure_receipts_and_report(
+            investigation_id,
+            plan,
+            retrieval,
+            documents,
+            force_refresh=request.force_refresh,
+        )
+        result = build_agent_debate_artifact(
+            investigation_id,
+            plan,
+            analyst_result,
+            counter_result,
+            claim_counterpoint_result,
+            receipts_result,
+            report_result,
+        )
+        _investigation_repo.save_agent_debate_result(result)
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Agent debate build failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -634,7 +795,8 @@ def final_report(
     try:
         cached_report = None if request.force_refresh else _investigation_repo.get_final_report_result(investigation_id)
         cached_receipts = None if request.force_refresh else _investigation_repo.get_receipts_result(investigation_id)
-        if cached_report is not None and cached_receipts is not None:
+        cached_agent_debate = None if request.force_refresh else _investigation_repo.get_agent_debate_result(investigation_id)
+        if cached_report is not None and cached_receipts is not None and cached_agent_debate is not None:
             return cached_report.model_copy(update={"cached": True})
 
         source_diversity_result = _investigation_repo.get_source_diversity_result(investigation_id)
@@ -642,33 +804,26 @@ def final_report(
             source_diversity_result = build_source_diversity_artifact(investigation_id, plan, retrieval, documents)
             _investigation_repo.save_source_diversity_result(source_diversity_result)
 
-        claim_counterpoint_result = _ensure_claim_counterpoint_result(
+        result, receipts_result, claim_counterpoint_result = _ensure_receipts_and_report(
             investigation_id,
             plan,
             retrieval,
             documents,
+            force_refresh=request.force_refresh,
         )
-        base_report = cached_report or _build_base_report_result(
-            investigation_id,
-            plan,
-            retrieval,
-            documents,
-        )
-
-        receipts_result = cached_receipts
-        if request.force_refresh or receipts_result is None:
-            verification_map = _collect_verification_map(documents, base_report, claim_counterpoint_result)
-            receipts_result = build_receipts_artifact(
+        counter_result = _ensure_counter_narrative_result(investigation_id, plan, retrieval, documents)
+        analyst_result = _ensure_analyst_result(investigation_id, plan, retrieval, documents)
+        if request.force_refresh or cached_agent_debate is None:
+            debate_result = build_agent_debate_artifact(
                 investigation_id,
                 plan,
-                documents,
-                base_report,
+                analyst_result,
+                counter_result,
                 claim_counterpoint_result,
-                verification_map,
+                receipts_result,
+                result,
             )
-            _investigation_repo.save_receipts_result(receipts_result)
-
-        result = apply_receipts_annotations(base_report, receipts_result)
+            _investigation_repo.save_agent_debate_result(debate_result)
         _investigation_repo.save_final_report_result(result)
         if _investigation_cache:
             _investigation_cache.invalidate(investigation_id)

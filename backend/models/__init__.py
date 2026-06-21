@@ -1,5 +1,7 @@
 from .document import Document
 from .investigation import (
+    AgentDebateRequest,
+    AgentDebateResult,
     AnalystRequest,
     AnalystResult,
     CandidateClaim,
@@ -21,6 +23,9 @@ from .investigation import (
     FinalReportSections,
     InvestigationPlan,
     InvestigationPlanTimeWindow,
+    NarrativeFamilyChild,
+    NarrativeFamilyRequest,
+    NarrativeFamilyResult,
     PlannerRequest,
     PlannerResponse,
     RawPage,
@@ -32,6 +37,7 @@ from .investigation import (
     RetrievalRound,
     RetrieveRequest,
     SearchResult,
+    SoftenedClaim,
     TimelineEvent,
     TimelineRequest,
     TimelineResult,
@@ -42,6 +48,8 @@ from .graph import NarrativeGraph, GraphNode, GraphEdge
 
 __all__ = [
     "Document",
+    "AgentDebateRequest",
+    "AgentDebateResult",
     "ClaimReceiptReview",
     "ClaimSupportStatus",
     "ClaimCounterpointPair",
@@ -60,6 +68,9 @@ __all__ = [
     "FinalReportSections",
     "InvestigationPlan",
     "InvestigationPlanTimeWindow",
+    "NarrativeFamilyChild",
+    "NarrativeFamilyRequest",
+    "NarrativeFamilyResult",
     "PlannerRequest",
     "PlannerResponse",
     "RawPage",
@@ -71,6 +82,7 @@ __all__ = [
     "RetrievalRound",
     "RetrieveRequest",
     "SearchResult",
+    "SoftenedClaim",
     "TimelineEvent",
     "TimelineRequest",
     "TimelineResult",

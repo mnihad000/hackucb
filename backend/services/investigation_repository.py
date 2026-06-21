@@ -7,12 +7,14 @@ from datetime import datetime, timezone
 
 from models.document import Document
 from models.investigation import (
+    AgentDebateResult,
     AnalystResult,
     ClaimCounterpointResult,
     CounterNarrativeResult,
     FinalReportResult,
     InvestigationPlan,
     InvestigationWorkspace,
+    NarrativeFamilyResult,
     ReceiptsResult,
     RetrievalResult,
     SourceDiversityResult,
@@ -101,9 +103,11 @@ class InvestigationRepository:
             source_diversity=self.get_source_diversity_result(investigation_id),
             timeline=self.get_timeline_result(investigation_id),
             counter_narratives=self.get_counter_narrative_result(investigation_id),
+            narrative_family=self.get_narrative_family_result(investigation_id),
             analyst=self.get_analyst_result(investigation_id),
             claim_counterpoints=self.get_claim_counterpoint_result(investigation_id),
             receipts=self.get_receipts_result(investigation_id),
+            agent_debate=self.get_agent_debate_result(investigation_id),
             report=self.get_final_report_result(investigation_id),
         )
 
@@ -321,6 +325,38 @@ class InvestigationRepository:
             return None
         return CounterNarrativeResult.model_validate_json(row["result_json"])
 
+    def save_narrative_family_result(self, result: NarrativeFamilyResult) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE investigations
+                SET status = ?, current_stage = ?, updated_at = ?
+                WHERE investigation_id = ?
+                """,
+                ("narrative_family_completed", "narrative_family", now, result.investigation_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO narrative_family_results (investigation_id, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(investigation_id) DO UPDATE SET
+                    result_json=excluded.result_json,
+                    updated_at=excluded.updated_at
+                """,
+                (result.investigation_id, result.model_dump_json(), now, now),
+            )
+
+    def get_narrative_family_result(self, investigation_id: str) -> NarrativeFamilyResult | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT result_json FROM narrative_family_results WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return NarrativeFamilyResult.model_validate_json(row["result_json"])
+
     def save_analyst_result(self, result: AnalystResult) -> None:
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
@@ -449,6 +485,38 @@ class InvestigationRepository:
             return None
         return ReceiptsResult.model_validate_json(row["result_json"])
 
+    def save_agent_debate_result(self, result: AgentDebateResult) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE investigations
+                SET status = ?, current_stage = ?, updated_at = ?
+                WHERE investigation_id = ?
+                """,
+                ("agent_debate_completed", "agent_debate", now, result.investigation_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO agent_debate_results (investigation_id, result_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(investigation_id) DO UPDATE SET
+                    result_json=excluded.result_json,
+                    updated_at=excluded.updated_at
+                """,
+                (result.investigation_id, result.model_dump_json(), now, now),
+            )
+
+    def get_agent_debate_result(self, investigation_id: str) -> AgentDebateResult | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT result_json FROM agent_debate_results WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return AgentDebateResult.model_validate_json(row["result_json"])
+
     def get_final_report_result(self, investigation_id: str) -> FinalReportResult | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -547,6 +615,13 @@ class InvestigationRepository:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS narrative_family_results (
+                    investigation_id TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS analyst_results (
                     investigation_id TEXT PRIMARY KEY,
                     result_json TEXT NOT NULL,
@@ -562,6 +637,13 @@ class InvestigationRepository:
                 );
 
                 CREATE TABLE IF NOT EXISTS receipts_results (
+                    investigation_id TEXT PRIMARY KEY,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_debate_results (
                     investigation_id TEXT PRIMARY KEY,
                     result_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,

@@ -176,7 +176,7 @@ class TrendingService:
         prior_topics = []
         previous = self._get_latest_snapshot()
         if previous is not None:
-            prior_topics = [topic.canonical_phrase for topic in previous.topics[:6]]
+            prior_topics = self._seedable_prior_topics(previous.topics)
         queries = self._discovery.build_queries(prior_topics=prior_topics, is_reseed=is_reseed)
         self._repository.create_run(run_id, is_reseed=is_reseed, queries=queries)
         try:
@@ -216,7 +216,8 @@ class TrendingService:
             }
         )
         documents = self._repository.list_discovery_documents()
-        expansion_stats, expansion_warnings = self._expand_top_candidates(run_id, documents)
+        run_documents = self._documents_for_run(run_id, documents)
+        expansion_stats, expansion_warnings = self._expand_top_candidates(run_id, run_documents)
         stats = stats.model_copy(
             update={
                 "query_count": stats.query_count + expansion_stats.query_count,
@@ -227,7 +228,8 @@ class TrendingService:
             }
         )
         documents = self._repository.list_discovery_documents()
-        topics = self._ranker.rank(documents, max_topics=self._settings.TRENDING_MAX_TOPICS)
+        rank_documents = self._documents_for_run(run_id, documents)
+        topics = self._ranker.rank(rank_documents, max_topics=self._settings.TRENDING_MAX_TOPICS)
         now = datetime.now(timezone.utc)
         snapshot = PublishedTrendingSnapshot(
             snapshot_id=f"snap_{uuid4().hex}",
@@ -299,6 +301,21 @@ class TrendingService:
                     stats.duplicate_documents += 1
 
         return stats, warnings
+
+    def _documents_for_run(self, run_id: str, documents):
+        return [record for record in documents if run_id in record.seen_run_ids]
+
+    def _seedable_prior_topics(self, topics) -> list[str]:
+        selected: list[str] = []
+        for topic in topics[:6]:
+            if topic.source_count < self._settings.TRENDING_MIN_DOCS:
+                continue
+            if topic.publisher_count < self._settings.TRENDING_MIN_PUBLISHERS:
+                continue
+            if not self._ranker.is_seedable_phrase(topic.canonical_phrase):
+                continue
+            selected.append(topic.canonical_phrase)
+        return selected
 
     def _needs_reseed(self, snapshot: PublishedTrendingSnapshot, now: datetime) -> bool:
         if snapshot.last_reseed_at is None:

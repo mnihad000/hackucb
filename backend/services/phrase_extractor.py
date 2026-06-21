@@ -24,12 +24,15 @@ _STOP_WORDS = {
     "over", "under", "again", "then", "here", "there", "also", "new",
     "one", "two", "says", "said", "say", "according", "amid", "via",
     "per", "report", "reports", "update", "updates", "amid", "amid",
+    "around", "today",
 }
 _GENERIC_NEWS_TERMS = {
     "analysis", "article", "articles", "breaking", "coverage", "debate",
-    "debates", "latest", "live", "narrative", "narratives", "news",
-    "opinion", "political", "politics", "story", "stories", "topic", "topics",
-    "update", "updates",
+    "debates", "housing", "implications", "industry", "latest", "live",
+    "market", "narrative", "narratives", "news", "official", "opinion",
+    "policy", "political", "politics", "public", "reaction", "research",
+    "review", "statement", "story", "stories", "topic", "topics", "update",
+    "updates", "world", "counter",
 }
 
 

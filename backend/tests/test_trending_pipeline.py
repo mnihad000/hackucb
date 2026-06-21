@@ -521,6 +521,173 @@ def test_trending_service_uses_retriever_to_expand_open_ended_candidates(tmp_pat
     assert any("spacex ipo" in topic.canonical_phrase for topic in snapshot.topics)
 
 
+def test_trending_service_only_reseeds_publishable_prior_topics(tmp_path):
+    repo = TrendingRepository(str(tmp_path / "trending.sqlite3"))
+    runtime = _RuntimeStub()
+    generated_at = datetime.now(timezone.utc)
+    repo.save_snapshot(
+        PublishedTrendingSnapshot(
+            snapshot_id="snap_prior",
+            state="ready",
+            generated_at=generated_at,
+            fresh_until=generated_at + timedelta(hours=6),
+            last_completed_run_at=generated_at,
+            last_reseed_at=generated_at,
+            topics=[
+                _topic("topic_world_cup", generated_at=generated_at).model_copy(
+                    update={"title": "World Cup", "canonical_phrase": "world cup"}
+                ),
+                _topic("topic_public_opinion", generated_at=generated_at).model_copy(
+                    update={"title": "Public Opinion", "canonical_phrase": "public opinion"}
+                ),
+                _topic("topic_around_world", generated_at=generated_at).model_copy(
+                    update={"title": "Around World", "canonical_phrase": "around world"}
+                ),
+            ],
+        )
+    )
+
+    class _DiscoveryStub:
+        def __init__(self):
+            self.received_prior_topics = []
+
+        def build_queries(self, prior_topics, is_reseed):
+            self.received_prior_topics = list(prior_topics)
+            return [DiscoveryQuery(query="energy tax", provider_role="discovery", topic_seed="energy")]
+
+        def discover(self, prior_topics, is_reseed):
+            return type(
+                "DiscoveryBatch",
+                (),
+                {
+                    "candidates": [],
+                    "stats": DiscoveryRunStats(query_count=1),
+                    "warnings": [],
+                },
+            )()
+
+    discovery = _DiscoveryStub()
+    service = TrendingService(repository=repo, runtime_store=runtime, discovery_agent=discovery)
+
+    service.refresh_now(is_reseed=True)
+
+    assert discovery.received_prior_topics == ["world cup"]
+
+
+def test_trending_service_ranks_current_run_documents_only(tmp_path):
+    repo = TrendingRepository(str(tmp_path / "trending.sqlite3"))
+    runtime = _RuntimeStub()
+    now = datetime(2026, 6, 21, 9, 0, tzinfo=timezone.utc)
+    queries = [DiscoveryQuery(query="around world", provider_role="discovery", topic_seed="around world")]
+    repo.create_run("disc_old", is_reseed=True, queries=queries)
+    stale_docs = [
+        _document("old1", "Public Opinion research roundup", "https://a.com/old-1", now - timedelta(hours=3), "national_news"),
+        _document("old2", "Public Opinion trends report", "https://b.com/old-2", now - timedelta(hours=3), "commentary"),
+        _document("old3", "Public Opinion survey dashboard", "https://c.com/old-3", now - timedelta(hours=2), "local_news"),
+        _document("old4", "Public Opinion review", "https://d.com/old-4", now - timedelta(hours=1), "national_news"),
+    ]
+    for doc in stale_docs:
+        repo.save_discovery_document("disc_old", doc, canonical_url=doc.url, domain=doc.source_name, provider="serpapi", search_query="public opinion")
+
+    fresh_docs = [
+        _document("doc1", "SpaceX IPO chatter spreads", "https://e.com/story-1", now - timedelta(hours=4), "national_news"),
+        _document("doc2", "Analysts track SpaceX IPO timing", "https://f.com/story-2", now - timedelta(hours=3), "commentary"),
+        _document("doc3", "Retail traders react to SpaceX IPO", "https://g.com/story-3", now - timedelta(hours=2), "blog"),
+        _document("doc4", "Bankers discuss SpaceX IPO prospects", "https://h.com/story-4", now - timedelta(hours=1), "national_news"),
+    ]
+
+    class _DiscoveryStub:
+        def __init__(self, docs):
+            self._docs = docs
+            self._index = 0
+
+        def build_queries(self, prior_topics, is_reseed):
+            return [DiscoveryQuery(query="breaking news today", provider_role="discovery", topic_seed="breaking news today")]
+
+        def discover(self, prior_topics, is_reseed):
+            candidates = []
+            for index, _doc in enumerate(self._docs, start=1):
+                candidates.append(
+                    type(
+                        "DiscoveryCandidateStub",
+                        (),
+                        {
+                            "search_result": SearchResult(
+                                query="breaking news today",
+                                title=f"candidate-{index}",
+                                url=f"https://candidate-{index}.com/story",
+                                snippet="candidate",
+                                rank=index,
+                                provider="serpapi",
+                                metadata={"source_name_hint": None},
+                            )
+                        },
+                    )()
+                )
+            return type(
+                "DiscoveryBatch",
+                (),
+                {
+                    "candidates": candidates,
+                    "stats": DiscoveryRunStats(query_count=1, result_count=len(self._docs), fetched_pages=len(self._docs), accepted_documents=len(self._docs)),
+                    "warnings": [],
+                },
+            )()
+
+        def normalize_candidate(self, candidate):
+            document = self._docs[self._index]
+            self._index += 1
+            return document
+
+    class _RetrieverStub:
+        def expand_candidate(self, plan, max_rounds=2):
+            return RetrievalPreview(
+                documents=[],
+                coverage_summary=CoverageSummary(),
+                warnings=[],
+                search_rounds=[],
+            )
+
+    for document in fresh_docs:
+        document.metadata = {"provider": "serpapi", "search_query": "breaking news today"}
+        document.phrases = ["spacex ipo", "spacex ipo chatter"]
+
+    snapshot = TrendingService(
+        repository=repo,
+        runtime_store=runtime,
+        discovery_agent=_DiscoveryStub(fresh_docs),
+        retriever_agent=_RetrieverStub(),
+    ).refresh_now(is_reseed=True)
+
+    assert snapshot.topics
+    assert all("public opinion" not in topic.canonical_phrase for topic in snapshot.topics)
+    assert any("spacex ipo" in topic.canonical_phrase for topic in snapshot.topics)
+
+
+def test_trending_ranker_filters_generic_reference_artifacts(tmp_path):
+    repo = TrendingRepository(str(tmp_path / "trending.sqlite3"))
+    now = datetime(2026, 6, 21, 9, 0, tzinfo=timezone.utc)
+    queries = [DiscoveryQuery(query="public reaction today", provider_role="discovery", topic_seed="public reaction today")]
+    repo.create_run("disc_1", is_reseed=True, queries=queries)
+    docs = [
+        _document("doc1", "Opinion Today | Substack", "https://opiniontoday.substack.com", now - timedelta(hours=4), "blog"),
+        _document("doc2", "WORLD Definition & Meaning | Dictionary.com", "https://www.dictionary.com/browse/world", now - timedelta(hours=3), "national_news"),
+        _document("doc3", "A Counter - Apps on Google Play", "https://play.google.com/store/apps/details?id=com.pra.counter&hl=en_US", now - timedelta(hours=2), "national_news"),
+        _document("doc4", "HousingWire - Industry News for Housing Professionals", "https://www.housingwire.com", now - timedelta(hours=1), "national_news"),
+    ]
+    docs[0].phrases = ["public opinion"]
+    docs[1].phrases = ["around world"]
+    docs[2].phrases = ["narrative around counter"]
+    docs[3].phrases = ["housing market"]
+
+    for doc in docs:
+        repo.save_discovery_document("disc_1", doc, canonical_url=doc.url, domain=doc.source_name, provider="serpapi", search_query="public reaction today")
+
+    topics = TrendingRanker().rank(repo.list_discovery_documents(), now=now, max_topics=5)
+
+    assert topics == []
+
+
 def test_trending_service_starts_topic_investigation_from_runtime_snapshot(tmp_path):
     repo = TrendingRepository(str(tmp_path / "trending.sqlite3"))
     investigation_repo = InvestigationRepository(str(tmp_path / "investigations.sqlite3"))

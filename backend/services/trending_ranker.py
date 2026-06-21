@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -10,10 +11,24 @@ from services.phrase_extractor import extract_top_phrases
 
 _GENERIC_TOPIC_TOKENS = {
     "analysis", "article", "articles", "breaking", "coverage", "debate",
-    "debates", "latest", "live", "narrative", "narratives", "news",
-    "opinion", "political", "politics", "story", "stories", "topic", "topics",
-    "update", "updates",
+    "debates", "housing", "implications", "industry", "latest", "live",
+    "market", "narrative", "narratives", "news", "official", "opinion",
+    "policy", "political", "politics", "public", "reaction", "research",
+    "review", "statement", "story", "stories", "topic", "topics", "update",
+    "updates", "world", "counter", "around",
 }
+_REFERENCE_DOMAINS = {
+    "dictionary.com",
+    "imdb.com",
+    "play.google.com",
+}
+_GENERIC_TITLE_PATTERNS = (
+    "apps on google play",
+    "breaking news, latest news",
+    "definition & meaning",
+    "industry news for",
+)
+_MAX_PUBLISHED_DOCUMENT_AGE = timedelta(days=10)
 
 
 def _topic_id(phrase: str) -> str:
@@ -40,7 +55,10 @@ class TrendingRanker:
         max_topics: int = 10,
     ) -> list[TrendingTopic]:
         now = now or datetime.now(timezone.utc)
-        live_docs = [doc for doc in documents if doc.document.published_at or doc.latest_seen_at]
+        live_docs = [
+            doc for doc in documents
+            if (doc.document.published_at or doc.latest_seen_at) and self._is_rankable_document(doc, now)
+        ]
         if not live_docs:
             return []
 
@@ -122,7 +140,11 @@ class TrendingRanker:
         top_n: int = 8,
         min_doc_freq: int = 2,
     ) -> list[str]:
-        live_docs = [doc for doc in documents if doc.document.published_at or doc.latest_seen_at]
+        now = datetime.now(timezone.utc)
+        live_docs = [
+            doc for doc in documents
+            if (doc.document.published_at or doc.latest_seen_at) and self._is_rankable_document(doc, now)
+        ]
         if not live_docs:
             return []
 
@@ -142,6 +164,10 @@ class TrendingRanker:
             if len(selected) >= top_n:
                 break
         return selected
+
+    def is_seedable_phrase(self, phrase: str) -> bool:
+        normalized = phrase.lower().strip()
+        return self._is_publishable_phrase(normalized)
 
     def _fallback_phrases(self, documents: list[DiscoveryDocumentRecord]) -> list[tuple[str, int]]:
         counts: Counter[str] = Counter()
@@ -293,4 +319,37 @@ class TrendingRanker:
         if len(set(tokens)) == 1:
             return False
         return any(token not in _GENERIC_TOPIC_TOKENS for token in tokens)
+
+    def _is_rankable_document(self, record: DiscoveryDocumentRecord, now: datetime) -> bool:
+        title = record.document.title.strip()
+        if len(title.split()) < 2:
+            return False
+
+        published_at = record.document.published_at
+        if published_at is not None and published_at < now - _MAX_PUBLISHED_DOCUMENT_AGE:
+            return False
+
+        domain = (record.domain or urlparse(record.document.url).netloc).lower()
+        if any(domain == blocked or domain.endswith(f".{blocked}") for blocked in _REFERENCE_DOMAINS):
+            return False
+
+        title_lower = title.lower()
+        if any(pattern in title_lower for pattern in _GENERIC_TITLE_PATTERNS):
+            return False
+
+        path = urlparse(record.document.url).path.strip("/")
+        if not path and self._looks_like_generic_homepage(title_lower):
+            return False
+
+        return True
+
+    def _looks_like_generic_homepage(self, title: str) -> bool:
+        if "| substack" in title:
+            return True
+        generic_title_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9][a-z0-9'\-]{1,}", title)
+            if token not in {"fifa", "spacex", "supreme", "congress", "white", "house"}
+        }
+        return generic_title_tokens.issubset(_GENERIC_TOPIC_TOKENS | {"today", "latest", "videos"})
 

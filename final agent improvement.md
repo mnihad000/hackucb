@@ -1,419 +1,155 @@
 # Final Agent Improvement Plan
 
-## Goal
+## Objective
 
-Upgrade the current investigation system from a staged artifact pipeline into a compact but credible research pod.
+Turn the investigation core into a system that actually behaves like a compact research pod:
 
-The target is not "enterprise workflow software." The target is a system that feels visibly smarter, more adversarial, more evidence-aware, and more trustworthy when tracing narratives, origins, spread, counter-frames, and claim support.
+- it plans
+- it gathers
+- it challenges
+- it retries with purpose
+- it keeps claim-by-claim memory
+- it surfaces uncertainty honestly
+- it shows visible agent-to-agent handoffs instead of a dressed-up stage chain
 
-This plan assumes the current backend already has these useful foundations:
+This document replaces the earlier improvement plan with a stricter final-state spec based on a code review of the current implementation.
 
-- a planner
-- a retriever with multi-round search
-- timeline, source-diversity, counter-narrative, analyst, claim-counterpoint, receipts, and report stages
-- persisted investigation workspaces
+## Current Status After The Research Loop Upgrade
 
-The main weakness today is not lack of components. The main weakness is that the components mostly run in sequence and summarize the same packet, instead of actively improving the packet.
+The project is materially better than the original linear stage pipeline. It now has:
 
-## Diagnosis Of Current State
+- a backend-owned `InvestigationRunner`
+- persisted gap, skeptic, claim-ledger, provenance, and loop artifacts
+- lane-aware retrieval
+- a bounded multi-pass loop
+- workspace visibility for passes, gaps, provenance, and claim states
 
-Today the system is strong enough to look like a multi-stage investigation, but not strong enough to reliably behave like one.
+That is a real architectural step forward.
 
-The main gaps are:
+It is not the final form yet.
 
-1. Most stages are downstream artifact builders, not active collaborators.
-2. Retrieval is the only stage doing real external evidence gathering.
-3. Later stages rarely force new retrieval based on weak evidence.
-4. The "debate" layer is mostly a deterministic summary, not a true skeptic with authority.
-5. Verification is not yet central enough to shape conclusions before final synthesis.
-6. Stop conditions are mostly operational, not epistemic.
+The remaining gap is qualitative, not cosmetic: the system still often looks like agents more than it truly operates like agents.
 
-The result is:
+## Strict Code Review Findings
 
-- good narrative demos
-- decent report assembly
-- limited adversarial pressure
-- insufficient coverage repair when the first retrieval packet is weak
+These are the final blockers to treat as core-system issues, not optional polish.
 
-## Design Principle
+### 1. The orchestrator exists, but the main reasoning roles are still heuristic
 
-Do not solve this by adding many agents with overlapping jobs.
+The loop is real, but `Gap Analyst`, `Skeptic`, provenance review, and final synthesis are still mostly deterministic builders instead of live-model roles with structured outputs and adversarial reasoning.
 
-Solve it by creating a small supervised loop where later reasoning stages can:
+Consequence:
 
-- diagnose evidence gaps
-- request targeted retries
-- reject weak claims
-- soften language before the final report
+- the system loops, but it does not yet think in a meaningfully agentic way
+- retries are guided by thresholds more than by substantive argument
+- the frontend can show "agents," but the backend is still doing rule-based artifact assembly for major judgment calls
 
-The best version of this system is a research pod with 6 core roles and a 2-3 pass loop.
+### 2. The skeptic does not yet have real rejection authority
 
-## Target Architecture
+The skeptic currently softens or retries, but it is not behaving like a true adjudicator that can reliably reject an overclaimed conclusion and keep it out of the final synthesis.
+
+Consequence:
+
+- the "skeptic" is still closer to a caution layer than a governing authority
+- the system can still drift toward analyst-led output instead of adjudicated output
+
+### 3. Claim governance is not strict enough
+
+The claim ledger exists, but its state logic is not yet the single source of truth for what may appear in the report.
+
+Consequence:
+
+- claim states can still be derived too late or from mixed sources
+- report eligibility is not governed as tightly as it should be
+- a final report can still feel post-hoc filtered rather than truly claim-ledger-controlled
+
+### 4. Gap tracking is not truly stateful across passes
+
+The system stores gaps, but the final design still needs actual gap lifecycle tracking rather than mostly pass-local gap snapshots.
+
+Consequence:
+
+- "resolved" versus "still open" is weaker than it should be
+- pass history is informative, but not yet a rigorous work-log of evidence repair
+- the system cannot fully explain how a gap evolved from discovery to closure
+
+### 5. Retries are lane-scoped, not claim-scoped
+
+Retries currently target lanes and missing source classes, but the deepest version of this system needs retries attached to specific claims, hypotheses, and unresolved tensions.
+
+Consequence:
+
+- follow-up retrieval is useful, but still broader than necessary
+- the system does not yet show that one agent challenged one exact claim and sent retrieval back for a narrow repair mission
+
+### 6. Provenance is still anchor-first rather than chain-first
+
+The provenance layer identifies earliest anchors and duplicate clusters, but it does not yet construct a robust citation chain or lineage graph.
+
+Consequence:
+
+- "first observed" is better tracked than "likely originated from"
+- source ancestry remains shallow
+- origin investigations still risk feeling careful but incomplete
+
+### 7. Confidence is dimensioned, but not yet conservative enough
+
+Confidence dimensions now exist, which is good. The last step is to make final confidence strictly governed by the weakest critical dimension and claim survival outcomes, not by a partially separate report-level score.
+
+Consequence:
+
+- the system is safer than before, but can still look more confident than its weakest evidence warrants
+
+### 8. The report is still too analyst-shaped
+
+The report should be the final product of a claim-controlled synthesis stage after skeptic approval, not mostly the analyst draft with later annotations and filtering.
+
+Consequence:
+
+- the final answer can still inherit analyst framing too early
+- the final synthesizer is not yet a distinct, governed role
+
+### 9. The "agent debate" is still presentation-heavy
+
+The project now exposes richer artifacts, but it still does not persist a true inter-agent conversation or handoff trail.
+
+Consequence:
+
+- users can see outputs from multiple roles
+- users still cannot really see the agents briefing, challenging, revising, and handing work to one another
+
+### 10. Compatibility is additive, but not fully unified
+
+The new run loop is the preferred path, but the older per-stage compatibility routes still reflect the older artifact worldview more than a unified investigation state machine.
+
+Consequence:
+
+- backward compatibility is preserved
+- the architecture is not yet conceptually clean
+
+## Final Product Principle
+
+The end-state should not be:
+
+- "a bunch of named agents"
+- "a flashy UI around a sequential pipeline"
+- "a smarter report generator"
+
+The end-state should be:
+
+`a supervised, claim-driven research loop with visible inter-agent coordination`
+
+That means three things must be true at the same time:
+
+1. Every important judgment role is genuinely model-backed or explicitly absent.
+2. Claims and gaps are first-class control objects, not just report annotations.
+3. Users can inspect why the system kept digging, softened language, or refused to conclude.
+
+## Final Architecture
 
 ## Core Roles
 
-### 1. Planner
-
-Purpose:
-Turn the user query into an investigation brief rather than just a search plan.
-
-Planner output should include:
-
-- primary investigation question
-- canonical phrase or topic
-- intent: origin, spread, counter-frame, source ecosystem, general investigation
-- 3-5 subquestions
-- 2-3 rival hypotheses
-- disconfirming evidence criteria
-- must-have source classes
-- retrieval lanes to activate
-- stop conditions
-
-This is more robust than a normal plan because it defines what would count as enough evidence and what would count as failure.
-
-### 2. Retriever
-
-Purpose:
-Gather the evidence packet through explicit lanes, not generic repeated searching.
-
-The retriever should no longer behave like one broad search step with follow-up expansion. It should search through lanes:
-
-1. Discovery lane
-Find broad relevant coverage and candidate anchors.
-
-2. Corroboration lane
-Find independent support from different publishers and source types.
-
-3. Contradiction lane
-Find rebuttals, fact checks, counter-frames, and hostile interpretations.
-
-4. Provenance lane
-Find the earliest observed version, republished variants, source chains, and citation cascades.
-
-5. Official lane
-Find press releases, agency statements, hearings, transcripts, campaign pages, court filings, company statements, or other primary-source anchors.
-
-6. Community lane
-Find forums, blogs, local outlets, and community spread if the question is about diffusion rather than just top-down media coverage.
-
-The retriever should tag every document with:
-
-- retrieval lane
-- query used
-- round number
-- similarity to main phrase
-- contradiction signal
-- source uniqueness
-- primary-source likelihood
-- date confidence
-
-### 3. Gap Analyst
-
-Purpose:
-Read the current evidence packet and diagnose what is still missing.
-
-This is the most important missing role in the current system.
-
-The Gap Analyst should score:
-
-- chronology coverage
-- source diversity coverage
-- contradiction coverage
-- primary-source coverage
-- claim support density
-- duplication contamination
-- evergreen/reference contamination
-- confidence in "origin" versus only "first observed in retrieved corpus"
-
-Its output should be machine-actionable:
-
-- missing evidence list
-- weak claims list
-- missing source classes
-- retry priority
-- explicit follow-up retrieval instructions
-
-Example outputs:
-
-- Need one earlier dated source than June 18.
-- Need one official source and one independent hostile source.
-- Need proof that three publishers are not syndicating the same wire copy.
-- Need to distinguish phrase mutation from true narrative spread.
-
-### 4. Skeptic / Adjudicator
-
-Purpose:
-Actively challenge overclaiming and decide whether the investigation is allowed to conclude.
-
-This is not a UI debate summary. This is a gating stage.
-
-The Skeptic should inspect:
-
-- whether claims outrun evidence
-- whether chronology implies causality without proof
-- whether counter-evidence was actually searched for
-- whether duplicated coverage is being mistaken for consensus
-- whether primary-source anchors exist
-- whether the packet is good enough for the stated intent
-
-The Skeptic should be able to return:
-
-- pass
-- pass with softened language
-- retry required
-- claim rejected
-
-The Skeptic needs authority. If it cannot trigger another retrieval pass, it becomes decorative.
-
-### 5. Frame Mapper
-
-Purpose:
-Map related branches, phrase mutation, and competing frames.
-
-This role is close to your current narrative-family stage, but it should become more central.
-
-It should answer:
-
-- what branches exist
-- which branch is dominant
-- what phrases mutated
-- which changes are semantic drift versus real evidence change
-- where the counter-frame diverges from the main frame
-
-This becomes especially valuable for political and media narratives where the same event gets reframed across communities.
-
-### 6. Final Synthesizer
-
-Purpose:
-Write the final narrative only after the evidence packet survives challenge.
-
-The Final Synthesizer should not decide what is true on its own.
-Its job is to:
-
-- assemble the final report
-- preserve uncertainty honestly
-- separate observed facts from reasonable inferences
-- surface rejected claims and softened claims
-- make the final answer legible without pretending certainty
-
-## Supervisory Loop
-
-The system should run as a bounded loop, not an open-ended agent swarm.
-
-Use a 3-pass maximum:
-
-### Pass 1: Plan
-
-Planner creates:
-
-- core question
-- subquestions
-- rival hypotheses
-- required lanes
-- must-have evidence checklist
-
-### Pass 1: Retrieve
-
-Retriever executes all activated lanes and builds the first evidence packet.
-
-### Pass 1: Diagnose
-
-Gap Analyst scores coverage and surfaces missing evidence.
-
-### Pass 1: Challenge
-
-Skeptic decides:
-
-- enough to proceed
-- enough only with softened language
-- not enough, retry required
-
-### Pass 2: Targeted Retrieval
-
-Retriever runs only the missing lanes or missing source classes.
-
-No blind repetition. Every retry must be justified by diagnosed gaps.
-
-### Pass 2: Re-score
-
-Gap Analyst and Skeptic reassess.
-
-### Pass 3: Final Targeted Retrieval If Needed
-
-Only if the missing evidence is still specific and addressable.
-
-Otherwise the system should stop and explicitly say the evidence remains incomplete.
-
-### Final Synthesis
-
-Only after the packet clears the stop conditions.
-
-## Stop Conditions
-
-The current system mostly stops because it has enough documents or retrieval rounds.
-The upgraded system should stop because it has met evidence thresholds for the specific question type.
-
-Examples:
-
-### For origin questions
-
-Require:
-
-- earliest dated anchor in corpus
-- at least one attempt to find earlier variants
-- at least one provenance path or explicit note that provenance remains unclear
-- explicit warning if "origin" is really only "first observed in retrieved corpus"
-
-### For spread questions
-
-Require:
-
-- timeline coverage across at least 2 source classes
-- at least one broader-pickup or diffusion indicator
-- at least one contradiction or competing frame search
-
-### For counter-narrative questions
-
-Require:
-
-- at least one clear opposing or corrective cluster
-- evidence that it addresses the same claim, not just a nearby topic
-
-### For source ecosystem questions
-
-Require:
-
-- source diversity across publisher types
-- duplicate/syndication awareness
-- at least one independent non-amplifying source
-
-## Evidence Quality Framework
-
-The system should classify evidence before it synthesizes it.
-
-Every document should be scored on:
-
-1. Relevance
-2. Independence
-3. Date confidence
-4. Source uniqueness
-5. Primary-source strength
-6. Counter-evidence value
-7. Mutation-tracking value
-8. Verification status
-
-Suggested quality bands:
-
-- Tier A: primary or strong direct reporting
-- Tier B: independent secondary reporting
-- Tier C: commentary, derivative reporting, or contextual discussion
-- Tier D: low-trust, low-date-confidence, or ambiguous relevance
-
-Final reporting should visibly weight Tier A and Tier B more heavily.
-
-## Robustness Features To Add
-
-These are the logic upgrades that make the system investigation-worthy rather than just more theatrical.
-
-### 1. Coverage Gaps As First-Class Objects
-
-Do not just store warnings.
-Persist a structured list:
-
-- gap_id
-- gap_type
-- severity
-- related_claim_ids
-- recommended_retrieval_lane
-- resolved_in_round
-
-This makes the workspace look intelligent and lets the frontend show why the system kept digging.
-
-### 2. Claim Ledger
-
-Track every candidate claim across the pipeline:
-
-- proposed
-- supported
-- partially supported
-- contradicted
-- unresolved
-- rejected
-- softened
-
-This gives the user a real sense that the system investigated claims rather than merely authored paragraphs.
-
-### 3. Duplicate And Syndication Detection
-
-You need to avoid fake consensus.
-
-Detect:
-
-- identical wire copy
-- near-identical headlines
-- same press release repeated across outlets
-- same source cited by many secondary pieces
-
-The system should reduce confidence when apparent plurality comes from one origin.
-
-### 4. Provenance Tracing
-
-For origin-style investigations, add explicit source-chain tracing:
-
-- who published first in corpus
-- who cites whom
-- whether coverage traces back to a press release, social post, hearing, or article
-
-Even a simple first-pass provenance graph would make the system feel far more serious.
-
-### 5. Adversarial Retrieval
-
-For every strong claim, search for:
-
-- debunking
-- criticism
-- alternative framing
-- legal or official contradiction
-- earlier contradictory precedent
-
-This should be automatic, not user-dependent.
-
-### 6. Verification Before Final Confidence
-
-Do not let report confidence stay high if verification state is weak.
-
-Confidence should be penalized when:
-
-- many core citations are pending
-- page metadata mismatches live page data
-- strong claims rely on unavailable sources
-
-### 7. Time-Aware Claim Discipline
-
-The system must distinguish:
-
-- current event
-- evergreen topic
-- historical explainer
-- reference page
-
-This matters for both trending and investigation flows.
-
-### 8. Retrieval Budgeting
-
-Do not search endlessly.
-Use a bounded evidence budget:
-
-- documents fetched
-- source classes covered
-- retries used
-- unresolved gaps remaining
-
-This keeps the system practical while still feeling rigorous.
-
-## Recommended Minimal Agent Set
-
-Do not exceed 6 core roles for now:
+Limit the core system to these six roles:
 
 1. Planner
 2. Retriever
@@ -422,166 +158,559 @@ Do not exceed 6 core roles for now:
 5. Frame Mapper
 6. Final Synthesizer
 
-Other functions like receipts, verification, source-diversity summaries, and claim-counterpoints should remain as supporting services or subroutines, not headline "agents."
+Everything else should remain support infrastructure:
 
-That is cleaner, more believable, and easier to explain.
+- receipts
+- verification
+- duplicate clustering
+- provenance extraction
+- timeline extraction
+- source profiling
+- semantic grouping
 
-## How Existing Components Map Into The New System
+Those are services, not "agents."
 
-### Keep And Upgrade
+## Role Contracts
 
-- Planner: keep, but expand into subquestions, rival hypotheses, and stop conditions.
-- Retriever: keep, but split into explicit retrieval lanes and targeted retries.
-- Narrative family: keep, but reposition as Frame Mapper.
-- Receipts: keep, but treat as evidence-audit infrastructure rather than a standalone intelligence agent.
+### 1. Planner
 
-### Keep But Reframe
+Purpose:
+Create an investigation brief that defines the work and the stopping rules.
 
-- Analyst: turn into Final Synthesizer or a synthesis service after the packet is approved.
-- Agent debate: replace with a true Skeptic / Adjudicator stage.
+Planner output must include:
 
-### Add
+- `primary_question`
+- `canonical_phrase`
+- `intent`
+- `subquestions`
+- `rival_hypotheses`
+- `disconfirming_evidence_criteria`
+- `must_have_source_classes`
+- `retrieval_lanes`
+- `stop_conditions`
 
-- Gap Analyst
-- structured claim ledger
-- structured gap ledger
-- provenance tracing
+Planner authority:
 
-## User Experience Improvements
+- may define the brief
+- may define what evidence would count
+- may not conclude truth
+- may not soften or reject claims
 
-The system becomes much more impressive if users can see the thinking structure.
+### 2. Retriever
 
-The workspace should show:
+Purpose:
+Gather evidence packets through explicit lanes and targeted retry missions.
+
+Retriever lanes:
+
+- `discovery`
+- `corroboration`
+- `contradiction`
+- `provenance`
+- `official`
+- `community`
+
+Retriever authority:
+
+- may gather documents
+- may propose candidate evidence links
+- may not decide claim truth
+- may not resolve gaps by itself
+
+Retriever output must carry per-document metadata:
+
+- `retrieval_lane`
+- `retrieval_query`
+- `pass_number`
+- `relevance_score`
+- `contradiction_signal`
+- `source_uniqueness_score`
+- `primary_source_likelihood`
+- `date_confidence`
+- `quality_band`
+- `duplicate_cluster_id`
+- provenance hints
+
+### 3. Gap Analyst
+
+Purpose:
+Read the evidence packet and issue machine-actionable evidence deficits.
+
+Gap Analyst output must be live-model-backed in the real path. No silent heuristic substitute should impersonate this role.
+
+Gap Analyst output must include:
+
+- `gap_id`
+- `gap_type`
+- `severity`
+- `related_claim_ids`
+- `recommended_lane`
+- `recommended_source_classes`
+- `follow_up_queries`
+- `resolved_in_pass`
+- `status`
+
+Gap Analyst authority:
+
+- may diagnose missing evidence
+- may request targeted retrieval
+- may flag weak claims
+- may not approve final synthesis
+
+### 4. Skeptic / Adjudicator
+
+Purpose:
+Challenge overclaiming and decide whether the loop continues, softens, rejects, or stops.
+
+Skeptic decisions:
+
+- `pass`
+- `pass_with_softening`
+- `retry_required`
+- `claim_rejected`
+
+Skeptic authority:
+
+- may reject claims
+- may require targeted retry
+- may downgrade language
+- may terminate with `insufficient_evidence`
+- may block final synthesis until adjudication criteria are met
+
+This authority is non-negotiable. Without it, the skeptic is decorative.
+
+### 5. Frame Mapper
+
+Purpose:
+Track narrative mutation, branch structure, and competing frame divergence.
+
+Frame Mapper authority:
+
+- may map branch relationships
+- may identify semantic drift
+- may distinguish phrase mutation from evidence change
+- may inform skepticism and synthesis
+- may not settle claim truth alone
+
+### 6. Final Synthesizer
+
+Purpose:
+Produce the final report only from claims that survived adjudication.
+
+Final Synthesizer authority:
+
+- may write the final report
+- may present uncertainty and caveats
+- may not re-approve rejected claims
+- may not elevate unresolved claims into confident conclusions
+
+## Agent Communication Layer
+
+This is the most important addition needed for the system to feel like real agents doing deep dives and communicating.
+
+Add persisted inter-agent artifacts:
+
+### `AgentTurn`
+
+Represents one role acting in one pass.
+
+Fields:
+
+- `turn_id`
+- `investigation_id`
+- `pass_number`
+- `role`
+- `input_artifact_refs`
+- `output_artifact_ref`
+- `instructions_received`
+- `instructions_issued`
+- `decision_summary`
+- `confidence_delta`
+- `claim_ids_touched`
+- `gap_ids_touched`
+- `created_at`
+
+### `HandoffMemo`
+
+Represents one agent briefing another.
+
+Fields:
+
+- `memo_id`
+- `from_role`
+- `to_role`
+- `pass_number`
+- `subject`
+- `body`
+- `claim_ids`
+- `gap_ids`
+- `requested_action`
+- `status`
+
+### `ClaimTask`
+
+Represents a specific research task attached to a claim.
+
+Fields:
+
+- `task_id`
+- `claim_id`
+- `created_by_role`
+- `assigned_to_role`
+- `reason`
+- `queries`
+- `required_source_classes`
+- `status`
+- `resolved_by_pass`
+
+### `DecisionRecord`
+
+Represents a final or intermediate adjudication.
+
+Fields:
+
+- `decision_id`
+- `role`
+- `scope`
+- `target_id`
+- `decision`
+- `reason`
+- `evidence_refs`
+- `supersedes_decision_id`
+
+These objects make the system visibly collaborative rather than merely multi-output.
+
+## Supervisory Loop
+
+Keep the loop bounded to 3 passes maximum.
+
+The loop should be:
+
+1. Planner creates the brief.
+2. Retriever runs all selected lanes in pass 1.
+3. Gap Analyst scores the packet and emits structured gaps plus claim tasks.
+4. Skeptic reviews claims, gaps, stop conditions, and either:
+   - passes
+   - softens
+   - rejects
+   - requires targeted retry
+5. Retriever executes only approved retry tasks in pass 2.
+6. Gap Analyst reassesses only the unresolved deficits.
+7. Skeptic adjudicates again.
+8. Pass 3 runs only if the remaining open problems are specific and addressable.
+9. Final Synthesizer writes only from adjudicated claims.
+
+## Claim-Driven Control Model
+
+The claim, not the document packet, should become the main control unit after pass 1.
+
+Every candidate claim should have:
+
+- a stable `claim_id`
+- an origin role
+- a current state
+- a support set
+- a counter set
+- a verification state
+- unresolved questions
+- assigned retrieval tasks
+- language constraints
+
+Allowed claim states:
+
+- `proposed`
+- `supported`
+- `partially_supported`
+- `contradicted`
+- `unresolved`
+- `rejected`
+- `softened`
+
+Required behavior:
+
+- only `supported`, `partially_supported`, and `softened` claims may survive to the report
+- `softened` claims must carry mandatory language constraints
+- `rejected` claims must remain visible in the workspace
+- `unresolved` claims may appear only inside limitations or open questions
+- the final synthesizer may not bypass the ledger
+
+## Gap Lifecycle Model
+
+Gaps must become stateful across passes.
+
+Each gap needs lifecycle support:
+
+- `open`
+- `in_progress`
+- `resolved`
+- `accepted_unresolved`
+- `superseded`
+
+Each gap should also store:
+
+- `created_in_pass`
+- `last_reviewed_in_pass`
+- `resolved_in_pass`
+- `resolution_reason`
+- `resolution_evidence_refs`
+
+This prevents fake "resolution" and lets the user inspect real evidence repair.
+
+## Retrieval Must Become Claim-Scoped On Retry
+
+Pass 1 can stay lane-driven.
+
+Passes 2 and 3 should become claim-scoped and task-scoped:
+
+- each retry should be tied to one or more `claim_ids`
+- each retry should cite the exact skeptic or gap-analyst memo that triggered it
+- each retry should declare what success would look like
+- each retry should be scored against whether it repaired the intended claim gap
+
+This is how the system starts to feel like agents are actually sending one another back out for targeted work.
+
+## Provenance Must Become Chain-Aware
+
+Origin investigations need more than earliest anchors.
+
+Add explicit provenance structures:
+
+- `publication_first_seen`
+- `earliest_dated_anchor`
+- `earliest_cited_origin`
+- `official_origin_anchor`
+- `upstream_citation_edges`
+- `duplicate_cluster_ancestry`
+- `press_release_lineage`
+- `true_origin_unknown`
+
+The system should distinguish:
+
+- first observed in retrieved corpus
+- earliest dated retrieved source
+- likely upstream source
+- official source of record
+- unresolved origin
+
+This difference must be visible in both the ledger and the report language.
+
+## Syndication And Independence Discipline
+
+Duplicate handling needs to become independence handling.
+
+Add cluster classes:
+
+- `identical_copy`
+- `near_identical_copy`
+- `shared_upstream_citation`
+- `press_release_lineage`
+- `quote_recycling`
+
+Per-cluster outputs should include:
+
+- cluster type
+- likely upstream node
+- member documents
+- independent-source count
+- confidence penalty
+
+This should directly affect:
+
+- claim support scoring
+- contradiction scoring
+- provenance confidence
+- final synthesis confidence
+
+## Verification As A Governor, Not A Decoration
+
+Verification must influence outcome, not just annotation.
+
+Required rules:
+
+- a claim cannot be `supported` if its core support is mostly `pending`, `mismatched`, or `unavailable`
+- verified contradiction should outweigh weak unverified support
+- final confidence must be capped when core receipts remain weak
+- the report should explicitly mark when strongest support is still unverified
+
+## Stop Conditions Must Be Structured
+
+Do not infer stop-condition satisfaction from loose text matching.
+
+Represent stop conditions as explicit typed rules.
+
+Examples:
+
+### `origin`
+
+- `needs_earliest_anchor`
+- `needs_earlier_variant_attempt`
+- `needs_provenance_path_or_uncertainty`
+- `needs_first_observed_disclaimer_if_origin_unproven`
+
+### `spread`
+
+- `needs_multi_class_timeline`
+- `needs_diffusion_signal`
+- `needs_contradiction_search_attempt`
+
+### `counter_narrative`
+
+- `needs_direct_opposing_cluster`
+- `needs_same_claim_alignment`
+
+### `source_ecosystem`
+
+- `needs_source_diversity`
+- `needs_duplicate_awareness`
+- `needs_independent_non_amplifying_source`
+
+The skeptic should evaluate these through structured fields, not by pattern-matching prose.
+
+## Final Confidence Framework
+
+Keep these dimensions:
+
+1. `coverage_confidence`
+2. `chronology_confidence`
+3. `contradiction_confidence`
+4. `provenance_confidence`
+5. `verification_confidence`
+6. `synthesis_confidence`
+
+But add strict governing rules:
+
+- overall report confidence must be capped by the weakest critical dimension
+- if provenance or verification is weak on an origin-style claim, the total confidence may not exceed medium
+- if any surviving claim is only `softened`, final language must remain qualified
+- if unresolved critical gaps remain, final decision should prefer `insufficient_evidence` over a polished low-confidence report
+
+## Final Report Rules
+
+The report should be a synthesis product, not a dressed analyst draft.
+
+Required rules:
+
+- the final synthesizer reads the claim ledger, skeptic reviews, provenance trace, and receipts
+- rejected claims do not appear as findings
+- unresolved claims appear only as limitations or unanswered questions
+- softened claims must use enforced language templates
+- origin findings must differentiate retrieved-corpus first-seen from actual origin
+- the report should include a short "why we stopped" section tied to stop conditions
+
+## UI Requirements For "Actual Agents"
+
+If the system should feel like real agents, users need to see the handoffs.
+
+The workspace should expose:
 
 - investigation brief
-- rival hypotheses
-- evidence lanes used
-- current evidence score
-- unresolved gaps
-- retry history
-- claims that survived
-- claims that were softened
-- claims that were rejected
-- verification state of top citations
+- active and completed passes
+- retrieval lanes used
+- agent turn log
+- handoff memos
+- claim tasks
+- open and resolved gaps
+- claim ledger with state transitions
+- softened and rejected claims
+- provenance chain summary
+- duplicate cluster summary
+- verification state of top receipts
+- final stop-condition decision
 
-This creates the feeling of a live research pod rather than a hidden chain of API calls.
+The user should be able to answer:
 
-## Recommended Model Strategy
+- who asked for this retry
+- which claim it was meant to repair
+- what evidence came back
+- why the skeptic still objected or cleared it
 
-Do not use the same model strength everywhere.
+That is the threshold where the system feels genuinely agentic.
 
-Use a stronger model for:
+## Model Strategy
+
+Live model access should be mandatory for the reasoning roles in the upgraded path:
 
 - Planner
 - Gap Analyst
 - Skeptic / Adjudicator
+- Frame Mapper
 - Final Synthesizer
 
-Use cheaper models or deterministic logic for:
+Deterministic or cheaper support logic is appropriate for:
 
 - clustering
-- phrase grouping
-- source labeling
-- receipt preprocessing
 - duplicate detection
-- timeline extraction
+- source labeling
+- date extraction
+- verification preprocessing
+- timeline assembly
 
-This keeps the system impressive without becoming expensive.
+Fail-closed rule:
 
-## Confidence Framework
+- if required reasoning-role models are unavailable, return an explicit configuration or insufficient-capability state
+- do not silently replace core reasoning roles with heuristic stand-ins while presenting them as agents
 
-Every major stage should produce both a score and a reasoned basis for that score.
+## Compatibility And API Discipline
 
-Suggested dimensions:
+Keep current routes for backward compatibility.
 
-1. coverage confidence
-2. chronology confidence
-3. contradiction confidence
-4. provenance confidence
-5. verification confidence
-6. synthesis confidence
+But the architecture should converge on one truth:
 
-Final report confidence should be the minimum or a conservative blend, not an optimistic average.
+- `POST /api/investigations/{id}/run` is the canonical path
+- `GET /api/investigations/{id}` is the canonical workspace view
+- legacy stage endpoints should read from persisted run state when possible
+- when recomputation is requested, it should be framed as substage recomputation against the persisted investigation packet, not as a separate old pipeline
 
-That prevents polished reports from masking weak evidence.
+## Anti-Patterns To Explicitly Forbid
 
-## Failure Modes The System Must Explicitly Handle
+Do not regress into any of these:
 
-The upgraded system should be able to say:
+- fake "agent" names over deterministic summaries
+- report claims that bypass the claim ledger
+- retries that are not tied to specific gaps or claims
+- gap resolution without recorded supporting evidence
+- optimistic confidence that ignores weak verification or provenance
+- treating multiple syndicated copies as independent corroboration
+- describing "origin" when the system only has "first observed in retrieved corpus"
+- allowing the analyst draft to dominate the final report after skeptic objection
 
-- We found the earliest item in the retrieved corpus, not the true origin.
-- We found broad repetition, but not independent corroboration.
-- We found a counter-frame, but it does not directly address the same claim.
-- We found many recent pages, but they mostly derive from one upstream source.
-- We found relevant documents, but too few are verified or date-confident.
-- We cannot responsibly conclude more without more evidence.
+## Test Requirements For Final Potential
 
-That honesty is part of the product quality.
+The final pass on the core system should include tests for:
 
-## Phased Rollout
+- planner brief generation and stop-condition structuring
+- claim-scoped retry task generation
+- gap lifecycle transitions across passes
+- skeptic claim rejection and softening authority
+- report exclusion of rejected and unresolved claims
+- mandatory language softening on softened claims
+- provenance chain assembly and unresolved-origin handling
+- syndication cluster penalties affecting claim support
+- confidence capping by weakest critical dimension
+- persisted `AgentTurn`, `HandoffMemo`, and `ClaimTask` visibility in the workspace
+- compatibility behavior of legacy stage endpoints against persisted run state
 
-### Phase 1: Credible Research Loop
+## Final Definition Of Success
 
-Implement:
+The core system has reached its final potential when it can do all of this in one coherent run:
 
-- Gap Analyst
-- Skeptic / Adjudicator
-- targeted retry loop
-- structured stop conditions
-
-This is the highest-leverage upgrade.
-
-### Phase 2: Stronger Evidence Discipline
-
-Implement:
-
-- claim ledger
-- gap ledger
-- duplicate/syndication detection
-- provenance tracing
-- verification-aware confidence penalties
-
-This is where the system starts to feel serious.
-
-### Phase 3: UI And Product Polish
-
-Implement:
-
-- workspace visibility for retries and gaps
-- claim survival and rejection display
-- evidence-lane visualization
-- provenance and mutation views
-
-This is what makes the intelligence legible to users.
-
-## What "Good" Looks Like
-
-A strong final system should be able to do this:
-
-1. Receive a free-form investigation prompt.
-2. Break it into subquestions and rival hypotheses.
-3. Retrieve evidence across multiple lanes.
-4. Detect what is still missing.
-5. Run one or two targeted evidence-repair passes.
-6. Reject or soften weak claims.
-7. Distinguish origin, spread, and framing drift.
-8. Produce a report that feels careful, adversarial, and well-grounded.
-
-That is already impressive and cool.
-It is also materially more robust than the current architecture without becoming bloated.
+1. interpret a vague user investigation prompt into a disciplined brief
+2. retrieve across multiple evidence lanes
+3. identify exact claim and evidence deficits
+4. send targeted retry missions for those deficits
+5. preserve a visible handoff trail between roles
+6. reject or soften claims with explicit reasons
+7. distinguish spread, origin, mutation, and counter-framing
+8. trace provenance with honest uncertainty
+9. produce a final report that is clearly governed by adjudicated evidence
+10. show the user why it stopped
 
 ## Final Recommendation
 
-Do not market the next version as "more agents."
+The last core upgrade should not be "more features."
 
-Market it internally as:
+It should be:
 
-"a supervised research loop with adversarial evidence review."
+`make the reasoning roles real, make claim control strict, and make the agent handoffs visible`
 
-That is the actual upgrade path.
-
-The most important implementation priority is:
-
-Add a Gap Analyst and a real Skeptic with authority to trigger targeted retrieval retries.
-
-That one change turns the system from a sequential summarizer into an investigation engine.
+If those three things are implemented cleanly, the project will stop feeling like a good staged investigation demo and start feeling like an actual multi-agent research system.

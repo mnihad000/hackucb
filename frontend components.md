@@ -56,6 +56,14 @@
 - Keeping it visible by default made the page feel defensive and over-instrumented.
 - If limitations matter later, they should return in a more compact advanced-details surface.
 
+## Timeline
+- Removed from the shared investigation page in both mock and live modes.
+- This section presented the investigation as a linear sequence of dated events and source pickups.
+- It was useful for chronology, but on the current page it added another long reading block after the map.
+- The result was too much duplication between the visual flowchart and the textual event list.
+- Keeping both by default made the page longer and harder to scan.
+- The investigation page now favors a lighter primary narrative surface over a second chronology module.
+
 ## Flowchart Guidance Note
 - Removed from the shared investigation page in both mock and live modes.
 - This was the short paragraph under the map about first-observed sources and coordination.

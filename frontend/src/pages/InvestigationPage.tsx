@@ -194,7 +194,6 @@ export default function InvestigationPage() {
                 {workspace.research_loop ? (
                   <ResearchLoopCard workspace={workspace} />
                 ) : null}
-                {workspace.timeline ? <TimelineCard timeline={workspace.timeline} /> : null}
               </div>
               <div className="space-y-6">
                 {workspace.agent_debate ? (
@@ -454,55 +453,6 @@ function ClaimLedgerCard({
   );
 }
 
-function TimelineCard({
-  timeline,
-}: {
-  timeline: NonNullable<LiveInvestigationWorkspace["timeline"]>;
-}) {
-  return (
-    <div className="rounded-[2rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(255,255,255,0.86)] p-7 shadow-[0_38px_68px_-46px_rgba(19,35,58,0.4)] backdrop-blur-xl sm:p-8">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="eyebrow">Timeline</p>
-          <p className="mt-4 max-w-3xl text-base leading-7 text-[var(--muted)]">
-            {timeline.timeline_summary}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <span className="data-pill">{timeline.confidence_label} confidence</span>
-          <span className="data-pill">{timeline.timeline_events.length} events</span>
-        </div>
-      </div>
-
-      <div className="mt-6 space-y-4">
-        {timeline.timeline_events.slice(0, 6).map((event) => (
-          <article
-            key={event.id}
-            className="rounded-[1.35rem] border border-[rgba(19,35,58,0.08)] bg-white/92 p-5"
-          >
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="data-pill">{event.event_type.replaceAll("_", " ")}</span>
-              <span className="data-pill">{event.narrative_side}</span>
-            </div>
-            <h3 className="mt-4 text-lg font-semibold tracking-[-0.03em] text-[var(--ink)]">
-              {event.title}
-            </h3>
-            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-              {formatTimestamp(event.timestamp)} · {event.source_name}
-            </p>
-            <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{event.explanation}</p>
-            {event.snippet ? (
-              <p className="mt-3 rounded-[1rem] border border-[rgba(19,35,58,0.08)] bg-[rgba(245,247,250,0.9)] px-4 py-3 text-sm leading-6 text-[var(--muted)]">
-                {event.snippet}
-              </p>
-            ) : null}
-          </article>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function AgentDebateCard({
   debate,
 }: {
@@ -616,11 +566,4 @@ function MetricCard({ label, value }: { label: string; value: string }) {
       <p className="mt-2 text-sm font-semibold leading-6 text-[var(--ink)]">{value}</p>
     </div>
   );
-}
-
-function formatTimestamp(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
 }

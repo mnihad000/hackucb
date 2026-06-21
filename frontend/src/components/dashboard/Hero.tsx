@@ -20,19 +20,15 @@ export default function Hero({ prompts }: HeroProps) {
                 Trace how political stories spread.
               </h1>
               <p className="mt-6 max-w-2xl text-lg leading-8 text-[var(--muted)] sm:text-xl">
-                RhetoriQ investigates political stories, maps how the narrative evolves,
-                and gives every major claim a path back to evidence.
+                RhetoriQ maps how narratives emerge, mutate, and get challenged —
+                with receipts for every major claim.
               </p>
 
-              <div className="mt-7 flex flex-wrap gap-3">
+              <div className="mt-7 flex flex-wrap gap-2.5">
                 <span className="data-pill">Clickable receipts</span>
                 <span className="data-pill">Counter-narratives</span>
-                <span className="data-pill">Human review recommended</span>
+                <span className="data-pill">Source-grounded</span>
               </div>
-
-              <p className="mt-8 max-w-xl text-sm font-medium uppercase tracking-[0.22em] text-[var(--muted)]">
-                Source-grounded. Nonpartisan by design. Built for human review.
-              </p>
             </div>
 
             <AskRhetoriQ prompts={prompts} />

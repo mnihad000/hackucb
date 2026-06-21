@@ -13,8 +13,8 @@ export default function RecentInvestigations({
   return (
     <Section
       eyebrow="Recent Investigations"
-      title="Open a prepared investigation flow."
-      description="These seeded stories act as reliable jump points for demos, screenshots, and the first backend integration pass."
+      title="Open a prepared investigation."
+      description="Source-grounded investigations ready to explore — each with a full narrative tree, timeline, and receipts."
       className="pt-16"
     >
       <div className="grid gap-4 lg:grid-cols-3">

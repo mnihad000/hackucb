@@ -46,10 +46,34 @@ export default function DashboardPage() {
   return (
     <main>
       <Header />
-      <Hero prompts={examplePrompts} />
-      <NarrativeRadar feed={feed} errorMessage={errorMessage} />
-      <RecentInvestigations investigations={recentInvestigations} />
-      <TrustStrip />
+
+      {/* Signal thread — thin vertical line with traveling glow, runs behind all sections */}
+      <div className="relative">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-0 top-0 w-px"
+          style={{
+            left: "max(1.25rem, calc(50% - 39.5rem))",
+            background:
+              "linear-gradient(180deg, transparent 0%, rgba(23,44,71,0.22) 6%, rgba(23,44,71,0.22) 94%, transparent 100%)",
+          }}
+        >
+          <div
+            className="absolute h-24 w-full"
+            style={{
+              background:
+                "linear-gradient(180deg, transparent 0%, var(--accent) 50%, transparent 100%)",
+              opacity: 0.8,
+              animation: "signal-travel 5s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+            }}
+          />
+        </div>
+
+        <Hero prompts={examplePrompts} />
+        <NarrativeRadar feed={feed} errorMessage={errorMessage} />
+        <RecentInvestigations investigations={recentInvestigations} />
+        <TrustStrip />
+      </div>
     </main>
   );
 }

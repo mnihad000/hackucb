@@ -114,6 +114,18 @@ def test_plan_investigation_falls_back_on_model_failure():
     assert isinstance(plan, InvestigationPlan)
 
 
+def test_plan_investigation_ignores_cached_fixture_for_live_queries():
+    plan = plan_investigation(
+        "What narratives are forming around immigration this week?",
+        model_client=CachedModelClient(),
+    )
+    assert plan.query_text == "What narratives are forming around immigration this week?"
+    assert plan.canonical_phrase is None
+    assert plan.time_window.label == "this_week"
+    assert "hidden energy tax" not in plan.topic.lower()
+    assert "hidden energy tax" not in " ".join(plan.search_queries).lower()
+
+
 def test_plan_investigation_baseline_avoids_forbidden_origin_language():
     client = _AlwaysFailClient()
     plan = plan_investigation(

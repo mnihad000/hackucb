@@ -15,6 +15,7 @@ import json
 import os
 from typing import Any
 
+from config import get_settings
 
 # ---------------------------------------------------------------------------
 # Base
@@ -90,12 +91,13 @@ class MockModelClient(BaseModelClient):
 class GeminiModelClient(BaseModelClient):
     """
     Calls Google Gemini API (google-genai SDK).
-    Requires GEMINI_API_KEY. Model defaults to GEMINI_MODEL env var or 'gemini-2.5-flash'.
+    Requires GEMINI_API_KEY. Model defaults to GEMINI_MODEL from backend settings.
     """
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
-        self._api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
-        self._model = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        settings = get_settings()
+        self._api_key = api_key or settings.GEMINI_API_KEY
+        self._model = model or settings.GEMINI_MODEL
 
         if not self._api_key:
             raise RuntimeError(
@@ -133,12 +135,13 @@ class GeminiModelClient(BaseModelClient):
 class GroqModelClient(BaseModelClient):
     """
     Calls Groq API with JSON mode enabled.
-    Requires GROQ_API_KEY. Model defaults to GROQ_MODEL env var or 'llama-3.1-8b-instant'.
+    Requires GROQ_API_KEY. Model defaults to GROQ_MODEL from backend settings.
     """
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
-        self._api_key = api_key or os.environ.get("GROQ_API_KEY", "")
-        self._model = model or os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+        settings = get_settings()
+        self._api_key = api_key or settings.GROQ_API_KEY
+        self._model = model or settings.GROQ_MODEL
 
         if not self._api_key:
             raise RuntimeError(
@@ -176,14 +179,14 @@ class GroqModelClient(BaseModelClient):
 class OllamaModelClient(BaseModelClient):
     """
     Calls a local Ollama instance via its HTTP API.
-    Base URL defaults to OLLAMA_BASE_URL or 'http://localhost:11434'.
-    Model defaults to OLLAMA_MODEL or 'qwen3:8b'.
+    Base URL defaults to 'http://localhost:11434'.
+    Model defaults to 'llama3.1:8b'.
     No API key required.
     """
 
     def __init__(self, base_url: str | None = None, model: str | None = None) -> None:
-        self._base_url = (base_url or os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")).rstrip("/")
-        self._model = model or os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+        self._base_url = (base_url or "http://localhost:11434").rstrip("/")
+        self._model = model or "llama3.1:8b"
 
     def generate_json(self, system_prompt: str, user_prompt: str, schema_name: str) -> dict:
         import httpx
@@ -214,7 +217,7 @@ _FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 class CachedModelClient(BaseModelClient):
     """
     Loads pre-generated JSON from agents/fixtures/{schema_name}.json.
-    Used as a last-resort fallback when all live model calls fail.
+    Used only when explicitly requested in tests or local debugging.
     Falls back to MockModelClient if a fixture file does not exist.
     """
 
@@ -256,8 +259,6 @@ def build_model_client(prefer: str = "gemini") -> BaseModelClient:
                 import httpx
                 httpx.get(f"{client._base_url}/api/tags", timeout=3).raise_for_status()
                 return client
-            elif name == "cached":
-                return CachedModelClient()
         except Exception:
             continue
 
@@ -265,7 +266,7 @@ def build_model_client(prefer: str = "gemini") -> BaseModelClient:
 
 
 def _build_chain(prefer: str) -> list[str]:
-    order = ["gemini", "groq", "ollama", "cached", "mock"]
+    order = ["gemini", "groq", "ollama", "mock"]
     if prefer in order:
         order = [prefer] + [x for x in order if x != prefer]
     return order

@@ -6,7 +6,7 @@ import logging
 from pydantic import BaseModel, Field, ValidationError
 
 from agents.json_utils import validate_no_forbidden_language
-from agents.model_client import BaseModelClient, MockModelClient, build_model_client
+from agents.model_client import BaseModelClient, CachedModelClient, MockModelClient, build_model_client
 from agents.prompt_loader import load_prompt
 from config import get_settings
 from models.document import Document
@@ -74,7 +74,7 @@ def build_narrative_family(
             return baseline
         model_client = build_model_client("gemini")
 
-    if isinstance(model_client, MockModelClient):
+    if isinstance(model_client, (MockModelClient, CachedModelClient)):
         return _with_limitation(
             baseline,
             "Hybrid narrative family agent was unavailable, so deterministic family grouping was used.",

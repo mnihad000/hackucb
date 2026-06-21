@@ -16,7 +16,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from agents.json_utils import validate_no_forbidden_language
-from agents.model_client import BaseModelClient, MockModelClient, build_model_client
+from agents.model_client import BaseModelClient, CachedModelClient, MockModelClient, build_model_client
 from agents.prompt_loader import load_prompt
 from config import get_settings
 from models.investigation import InvestigationPlan, InvestigationPlanTimeWindow
@@ -123,7 +123,7 @@ def plan_investigation(
             return baseline
         model_client = build_model_client("gemini")
 
-    if isinstance(model_client, MockModelClient):
+    if isinstance(model_client, (MockModelClient, CachedModelClient)):
         return baseline
 
     system_prompt = load_prompt("planner")

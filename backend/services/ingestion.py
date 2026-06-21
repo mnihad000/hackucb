@@ -11,6 +11,7 @@ to all narrative/investigate endpoints via get_merged_documents().
 
 from datetime import datetime
 
+from config import get_settings
 from models.document import Document
 from services.document_store import live_store
 from services.gdelt import GDELTIngestion
@@ -67,7 +68,10 @@ def get_merged_documents(demo_docs: list[Document]) -> list[Document]:
     Live documents take precedence (deduplicated by id).
     Demo corpus fills gaps when the store is empty.
     """
+    settings = get_settings()
     live = live_store.get_all()
+    if not settings.DEMO_MODE:
+        return live
     if not live:
         return demo_docs
     live_ids = {d.id for d in live}

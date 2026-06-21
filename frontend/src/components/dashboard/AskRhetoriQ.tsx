@@ -56,12 +56,11 @@ export default function AskRhetoriQ({ prompts }: AskRhetoriQProps) {
       <div className="relative">
         <p className="eyebrow">Ask RhetoriQ</p>
         <h2 className="mt-4 text-3xl font-semibold tracking-[-0.03em] text-[var(--ink)]">
-          Start with a political story, claim, phrase, or issue.
+          Start with a story, claim, or topic.
         </h2>
-        <p className="mt-3 text-base leading-7 text-[var(--muted)]">
-          This now creates a live investigation plan, then the investigation page runs
-          retrieval, timeline, counter-narrative, analyst, and report steps from the
-          backend.
+        <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+          Paste a headline, article URL, phrase, or question. RhetoriQ traces the narrative
+          back to its sources with receipts for every major claim.
         </p>
 
         <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
@@ -92,19 +91,19 @@ export default function AskRhetoriQ({ prompts }: AskRhetoriQProps) {
           </p>
         ) : null}
 
-        <div className="mt-6">
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">
-            Example prompts
+        <div className="mt-5">
+          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-[var(--muted)]">
+            Try an example
           </p>
-          <div className="mt-3 flex flex-wrap gap-2.5">
+          <div className="mt-2.5 flex flex-wrap gap-2">
             {prompts.map((prompt) => (
               <button
                 key={prompt.id}
                 type="button"
                 onClick={() => applyPrompt(prompt)}
-                className="rounded-full border border-[var(--border)] bg-white/80 px-4 py-2 text-sm font-medium text-[var(--ink)] transition hover:-translate-y-0.5 hover:border-[var(--accent)] hover:text-[var(--accent)] focus:outline-none focus:ring-4 focus:ring-[rgba(124,144,172,0.12)]"
+                className="rounded-full border border-[var(--border)] bg-white/80 px-3.5 py-1.5 text-sm font-medium text-[var(--ink)] transition hover:-translate-y-0.5 hover:border-[var(--accent)] hover:text-[var(--accent)] focus:outline-none focus:ring-4 focus:ring-[rgba(124,144,172,0.12)]"
               >
-                {prompt.query}
+                {prompt.label}
               </button>
             ))}
           </div>

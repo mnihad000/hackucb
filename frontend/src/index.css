@@ -236,3 +236,23 @@ select {
     transform: translateY(0);
   }
 }
+
+@keyframes signal-travel {
+  0% {
+    top: -5rem;
+    opacity: 0;
+  }
+
+  8% {
+    opacity: 1;
+  }
+
+  92% {
+    opacity: 1;
+  }
+
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
+}
